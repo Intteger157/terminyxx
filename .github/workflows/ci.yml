@@ -15,7 +15,13 @@ concurrency:
 
 jobs:
   test:
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # macos-latest is Apple Silicon. Intel macOS and Windows arm64 are compiled
+        # (not tested) by the release workflow and by the cross-arch vet below.
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
@@ -39,6 +45,13 @@ jobs:
 
       - name: Go vet
         run: go vet ./...
+
+      # Type-check the other CPU architecture of the same OS. Windows code is
+      # cgo-free, so this works there; macOS amd64 is cross-built in vet too.
+      - name: Go vet (other arch)
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = Windows ]; then GOARCH=arm64 go vet ./...; else GOARCH=amd64 CGO_ENABLED=1 go vet ./...; fi
 
       - name: Go test
         run: go test ./...

@@ -1,6 +1,6 @@
 ; Inno Setup script for Terminyxx.
 ; Build the app first (wails build), then from the repo root:
-;   iscc /DAppVersion=0.1.1 build\windows\installer\terminyxx.iss
+;   iscc /DAppVersion=0.1.1 [/DArch=arm64] build\windows\installer\terminyxx.iss
 ; The installer is written to build\bin\.
 
 #ifndef AppVersion
@@ -9,6 +9,17 @@
 ; Numeric file version (no "-beta" suffix); the release workflow passes it for prerelease tags.
 #ifndef AppNumVersion
   #define AppNumVersion AppVersion
+#endif
+; Target CPU: x64 (default) or arm64. Pass /DArch=arm64 with an arm64 build of the exe.
+#ifndef Arch
+  #define Arch "x64"
+#endif
+#if Arch == "arm64"
+  #define ArchAllowed "arm64"
+#elif Arch == "x64"
+  #define ArchAllowed "x64compatible"
+#else
+  #error Arch must be x64 or arm64
 #endif
 #define AppName "Terminyxx"
 #define AppExe "terminyxx.exe"
@@ -36,11 +47,11 @@ DisableProgramGroupPage=yes
 ; Per-user install by default (no UAC); the user can pick "all users" in the dialog.
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
-ArchitecturesAllowed=x64compatible
-ArchitecturesInstallIn64BitMode=x64compatible
+ArchitecturesAllowed={#ArchAllowed}
+ArchitecturesInstallIn64BitMode={#ArchAllowed}
 MinVersion=10.0
 OutputDir={#Root}\build\bin
-OutputBaseFilename=Terminyxx-{#AppVersion}-windows-x64-setup
+OutputBaseFilename=Terminyxx-{#AppVersion}-windows-{#Arch}-setup
 SetupIconFile={#Root}\build\windows\icon.ico
 UninstallDisplayIcon={app}\{#AppExe}
 UninstallDisplayName={#AppName}

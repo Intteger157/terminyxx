@@ -1,7 +1,9 @@
 name: Release
 
-# Push a tag like v0.1.1 to build the Windows installer and publish a GitHub release.
-# Run it by hand (workflow_dispatch) to build the installer as an artifact without releasing.
+# Push a tag like v0.1.2 to build every platform and publish a GitHub release:
+#   Windows x64 + arm64: Inno Setup installer and portable exe
+#   macOS universal (Intel + Apple Silicon): .dmg and .zip, ad-hoc signed
+# Run it by hand (workflow_dispatch) to build everything as artifacts without releasing.
 on:
   push:
     tags: ['v*']
@@ -12,53 +14,73 @@ permissions:
 
 env:
   WAILS_VERSION: v2.13.0
+  GO_VERSION: '1.26.x' # Wails v2.13 binding generation breaks on Go 1.27
+  NODE_VERSION: '24'
 
 jobs:
-  windows:
-    runs-on: windows-latest
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      numeric: ${{ steps.v.outputs.numeric }}
+      prerelease: ${{ steps.v.outputs.prerelease }}
     steps:
       - uses: actions/checkout@v4
+      - id: v
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then v="${GITHUB_REF_NAME#v}"; else v=$(jq -r .info.productVersion wails.json); fi
+          num="${v%%-*}"
+          pre=false; [ "$v" != "$num" ] && pre=true
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "numeric=$num" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$pre" >> "$GITHUB_OUTPUT"
+          echo "Version $v (numeric $num, prerelease $pre)"
 
+  windows:
+    needs: version
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goarch: amd64
+            arch: x64
+          - goarch: arm64
+            arch: arm64
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.26.x' # Wails v2.13 binding generator breaks on Go 1.27
+          go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: go.sum
-
       - uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
-      - name: Resolve version
-        id: ver
-        shell: pwsh
-        run: |
-          if ($env:GITHUB_REF_TYPE -eq 'tag') {
-            $v = $env:GITHUB_REF_NAME -replace '^v', ''
-          } else {
-            $v = (Get-Content wails.json -Raw | ConvertFrom-Json).info.productVersion
-          }
-          $num = ($v -split '-')[0]
-          "version=$v"  >> $env:GITHUB_OUTPUT
-          "numeric=$num" >> $env:GITHUB_OUTPUT
-          "prerelease=$([bool]($v -match '-'))".ToLower() >> $env:GITHUB_OUTPUT
-          Write-Host "Version $v (file version $num)"
-
       # The tag is the source of truth: stamp it into wails.json so the exe's
       # version resource matches the installer.
-      - name: Stamp version into wails.json
-        shell: pwsh
-        run: |
-          $j = Get-Content wails.json -Raw | ConvertFrom-Json
-          $j.info.productVersion = '${{ steps.ver.outputs.version }}'
-          $j | ConvertTo-Json -Depth 10 | Set-Content wails.json -Encoding utf8
+      - name: Stamp version
+        run: node -e "const f='wails.json',j=require('./'+f);j.info.productVersion=process.env.VERSION;require('fs').writeFileSync(f,JSON.stringify(j,null,2))"
 
       - name: Install Wails
         run: go install github.com/wailsapp/wails/v2/cmd/wails@${{ env.WAILS_VERSION }}
 
       - name: Build app
-        run: wails build -clean -platform windows/amd64 -trimpath -ldflags "-s -w"
+        run: wails build -clean -platform windows/${{ matrix.goarch }} -trimpath -ldflags "-s -w"
+
+      - name: Check exe architecture
+        shell: pwsh
+        run: |
+          $b = [IO.File]::ReadAllBytes("build\bin\terminyxx.exe")
+          $pe = [BitConverter]::ToInt32($b, 0x3c)
+          $m = '{0:x4}' -f [BitConverter]::ToUInt16($b, $pe + 4)
+          $want = @{ amd64 = '8664'; arm64 = 'aa64' }['${{ matrix.goarch }}']
+          Write-Host "PE machine 0x$m"
+          if ($m -ne $want) { throw "expected 0x$want" }
 
       - name: Install Inno Setup
         shell: pwsh
@@ -71,33 +93,109 @@ jobs:
       - name: Build installer
         shell: pwsh
         run: |
-          & $env:ISCC "/DAppVersion=${{ steps.ver.outputs.version }}" "/DAppNumVersion=${{ steps.ver.outputs.numeric }}" build\windows\installer\terminyxx.iss
+          & $env:ISCC "/DAppVersion=$env:VERSION" "/DAppNumVersion=${{ needs.version.outputs.numeric }}" "/DArch=${{ matrix.arch }}" build\windows\installer\terminyxx.iss
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Collect assets
-        id: assets
         shell: pwsh
         run: |
-          $v = '${{ steps.ver.outputs.version }}'
           New-Item -ItemType Directory -Force dist | Out-Null
-          Copy-Item "build\bin\Terminyxx-$v-windows-x64-setup.exe" dist\
-          Copy-Item build\bin\terminyxx.exe "dist\Terminyxx-$v-windows-x64-portable.exe"
-          Get-ChildItem dist | ForEach-Object {
-            "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name
-          } | Set-Content dist\SHA256SUMS.txt -Encoding ascii
-          Get-Content dist\SHA256SUMS.txt
+          Copy-Item "build\bin\Terminyxx-$env:VERSION-windows-${{ matrix.arch }}-setup.exe" dist\
+          Copy-Item build\bin\terminyxx.exe "dist\Terminyxx-$env:VERSION-windows-${{ matrix.arch }}-portable.exe"
+          Get-ChildItem dist
 
       - uses: actions/upload-artifact@v4
         with:
-          name: terminyxx-${{ steps.ver.outputs.version }}-windows
+          name: terminyxx-${{ env.VERSION }}-windows-${{ matrix.arch }}
           path: dist/*
+          if-no-files-found: error
+
+  macos:
+    needs: version
+    runs-on: macos-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: go.sum
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Stamp version
+        run: node -e "const f='wails.json',j=require('./'+f);j.info.productVersion=process.env.VERSION;require('fs').writeFileSync(f,JSON.stringify(j,null,2))"
+
+      - name: Install Wails
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@${{ env.WAILS_VERSION }}
+
+      # One universal bundle covers Intel (amd64) and Apple Silicon (arm64).
+      - name: Build app
+        run: wails build -clean -platform darwin/universal -trimpath -ldflags "-s -w"
+
+      - name: Bundle, check and sign
+        run: |
+          src=$(ls -d build/bin/*.app | head -1)
+          [ "$src" = build/bin/Terminyxx.app ] || mv "$src" build/bin/Terminyxx.app
+          app=build/bin/Terminyxx.app
+          exe="$app/Contents/MacOS/$(defaults read "$PWD/$app/Contents/Info" CFBundleExecutable)"
+          archs=$(lipo -archs "$exe"); echo "Architectures: $archs"
+          [[ "$archs" == *x86_64* && "$archs" == *arm64* ]] || { echo "not universal"; exit 1; }
+          # Not notarized: an ad-hoc signature is the minimum Apple Silicon needs to run it.
+          codesign --force --deep --sign - "$app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+
+      - name: Package dmg and zip
+        run: |
+          mkdir -p dist dmg
+          cp -R build/bin/Terminyxx.app dmg/
+          ln -s /Applications dmg/Applications
+          hdiutil create -volname "Terminyxx" -srcfolder dmg -ov -format UDZO "dist/Terminyxx-$VERSION-macos-universal.dmg"
+          ditto -c -k --keepParent build/bin/Terminyxx.app "dist/Terminyxx-$VERSION-macos-universal.zip"
+          ls -la dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: terminyxx-${{ env.VERSION }}-macos-universal
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    needs: [version, windows, macos]
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum * | tee SHA256SUMS.txt
 
       - name: Publish release
-        if: github.ref_type == 'tag'
-        shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.version.outputs.version }}
         run: |
-          $flags = @('--generate-notes', '--title', "Terminyxx ${{ steps.ver.outputs.version }}")
-          if ('${{ steps.ver.outputs.prerelease }}' -eq 'true') { $flags += '--prerelease' }
-          gh release create $env:GITHUB_REF_NAME (Get-ChildItem dist).FullName @flags
+          cat > notes.md <<'EOF'
+          ## Downloads
+
+          | Platform | File |
+          |---|---|
+          | Windows x64 | `*-windows-x64-setup.exe` (installer) or `*-windows-x64-portable.exe` |
+          | Windows ARM64 | `*-windows-arm64-setup.exe` or `*-windows-arm64-portable.exe` |
+          | macOS (Intel and Apple Silicon) | `*-macos-universal.dmg` or `.zip` |
+
+          The macOS app is not notarized. If macOS says it is damaged or can't be opened,
+          run `xattr -dr com.apple.quarantine /Applications/Terminyxx.app` once.
+          EOF
+          flags=(--title "Terminyxx $VERSION" --notes-file notes.md --generate-notes)
+          [ "${{ needs.version.outputs.prerelease }}" = true ] && flags+=(--prerelease)
+          gh release create "$GITHUB_REF_NAME" dist/* "${flags[@]}"
