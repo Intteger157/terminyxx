@@ -9,5 +9,12 @@
   "author": {
     "name": "Intteger157",
     "email": "al.shegonov@gmail.com"
+  },
+  "info": {
+    "companyName": "Intteger157",
+    "productName": "Terminyxx",
+    "productVersion": "0.1.1",
+    "copyright": "Copyright (c) 2026 Intteger157",
+    "comments": "SSH terminal, SFTP file manager and RDP launcher"
   }
 }

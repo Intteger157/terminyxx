@@ -1,0 +1,103 @@
+name: Release
+
+# Push a tag like v0.1.1 to build the Windows installer and publish a GitHub release.
+# Run it by hand (workflow_dispatch) to build the installer as an artifact without releasing.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  WAILS_VERSION: v2.13.0
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache-dependency-path: go.sum
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Resolve version
+        id: ver
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF_TYPE -eq 'tag') {
+            $v = $env:GITHUB_REF_NAME -replace '^v', ''
+          } else {
+            $v = (Get-Content wails.json -Raw | ConvertFrom-Json).info.productVersion
+          }
+          $num = ($v -split '-')[0]
+          "version=$v"  >> $env:GITHUB_OUTPUT
+          "numeric=$num" >> $env:GITHUB_OUTPUT
+          "prerelease=$([bool]($v -match '-'))".ToLower() >> $env:GITHUB_OUTPUT
+          Write-Host "Version $v (file version $num)"
+
+      # The tag is the source of truth: stamp it into wails.json so the exe's
+      # version resource matches the installer.
+      - name: Stamp version into wails.json
+        shell: pwsh
+        run: |
+          $j = Get-Content wails.json -Raw | ConvertFrom-Json
+          $j.info.productVersion = '${{ steps.ver.outputs.version }}'
+          $j | ConvertTo-Json -Depth 10 | Set-Content wails.json -Encoding utf8
+
+      - name: Install Wails
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@${{ env.WAILS_VERSION }}
+
+      - name: Build app
+        run: wails build -clean -platform windows/amd64 -trimpath -ldflags "-s -w"
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress }
+          if (-not (Test-Path $iscc)) { throw "ISCC.exe not found" }
+          "ISCC=$iscc" >> $env:GITHUB_ENV
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          & $env:ISCC "/DAppVersion=${{ steps.ver.outputs.version }}" "/DAppNumVersion=${{ steps.ver.outputs.numeric }}" build\windows\installer\terminyxx.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Collect assets
+        id: assets
+        shell: pwsh
+        run: |
+          $v = '${{ steps.ver.outputs.version }}'
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item "build\bin\Terminyxx-$v-windows-x64-setup.exe" dist\
+          Copy-Item build\bin\terminyxx.exe "dist\Terminyxx-$v-windows-x64-portable.exe"
+          Get-ChildItem dist | ForEach-Object {
+            "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name
+          } | Set-Content dist\SHA256SUMS.txt -Encoding ascii
+          Get-Content dist\SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: terminyxx-${{ steps.ver.outputs.version }}-windows
+          path: dist/*
+
+      - name: Publish release
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $flags = @('--generate-notes', '--title', "Terminyxx ${{ steps.ver.outputs.version }}")
+          if ('${{ steps.ver.outputs.prerelease }}' -eq 'true') { $flags += '--prerelease' }
+          gh release create $env:GITHUB_REF_NAME (Get-ChildItem dist).FullName @flags
