@@ -12,6 +12,7 @@ Run from the repo root unless noted:
 
 - `wails dev`: live development (Vite HMR for the frontend, Go rebuild on change). A browser dev server with Go bindings is also exposed at http://localhost:34115.
 - `wails build`: production build; output goes to `build/bin/`.
+- Release: bump `info.productVersion` in `wails.json`, then push a tag `vX.Y.Z`. `.github/workflows/release.yml` builds on windows-latest, stamps the tag's version into `wails.json`, packages `build/windows/installer/terminyxx.iss` with Inno Setup, and publishes the setup, a portable exe and `SHA256SUMS.txt` as a GitHub release (a `-suffix` tag becomes a prerelease). `ci.yml` runs the frontend build, `go vet` and `go test` on pushes to main and on PRs. Local installer: `iscc /DAppVersion=X.Y.Z build\windows\installer\terminyxx.iss` (from Git Bash set `MSYS_NO_PATHCONV=1`).
 - `wails generate module`: regenerate the TS bindings in `frontend/wailsjs/` after changing exported `App` methods or bound structs (`wails dev`/`wails build` also regenerate them).
 - `cd frontend && npm run build` (or `npx tsc --noEmit`): the only typecheck; there is no linter configured.
 - `go build ./...` / `go vet ./...`: `main.go` embeds `frontend/dist` via `//go:embed all:frontend/dist`, so the frontend must be built at least once before plain `go build` succeeds.
