@@ -1,0 +1,130 @@
+import { EyeOff, FolderTree, Lock, Plug, RotateCw, ShieldAlert, ShieldCheck, Unplug } from 'lucide-react';
+import { showCaptureNotice, useCaptureProtection } from '../../lib/captureProtection';
+import type { TerminalTab } from '../../types';
+
+interface StatusBarProps {
+  tab: TerminalTab | null;
+  size: { cols: number; rows: number } | null;
+  sftpOpen: boolean;
+  openTabs: number;
+  onToggleSftp: () => void;
+  onDisconnect: () => void;
+  onReconnect: () => void;
+  onOpenSecurity: () => void;
+  /** Presentation mode: secrets in output are masked. */
+  masking: boolean;
+  onToggleMasking: () => void;
+  lockConfigured: boolean;
+  onLock: () => void;
+}
+
+const LABEL: Record<TerminalTab['status'], string> = {
+  idle: 'Not connected',
+  connecting: 'Connecting…',
+  connected: 'Connected',
+  disconnected: 'Disconnected',
+};
+
+export function StatusBar({ tab, size, sftpOpen, openTabs, onToggleSftp, onDisconnect, onReconnect, onOpenSecurity, masking, onToggleMasking, lockConfigured, onLock }: StatusBarProps) {
+  const protection = useCaptureProtection();
+  const status = tab?.status;
+  const dot =
+    status === 'connected'
+      ? 'bg-emerald-400 shadow-[0_0_6px_rgb(52_211_153/0.8)]'
+      : status === 'connecting'
+        ? 'bg-amber-400 animate-pulse'
+        : status === 'disconnected'
+          ? 'bg-red-400'
+          : 'bg-gray-600';
+
+  return (
+    <footer className="flex items-center gap-3 h-7 px-3 flex-shrink-0 bg-app text-2xs text-gray-500 select-none">
+      {tab ? (
+        <>
+          <span className="flex items-center gap-1.5 text-gray-400">
+            <span className={`w-1.5 h-1.5 rounded-full ${dot}`} />
+            {LABEL[tab.status]}
+          </span>
+          {tab.profile && (
+            <span className="font-mono text-gray-500 truncate">
+              {tab.profile.username}@{tab.profile.host}
+              {tab.profile.port !== 22 && `:${tab.profile.port}`}
+            </span>
+          )}
+          {status === 'connected' && (
+            <button className="btn-ghost h-5 px-1.5 text-2xs" onClick={onDisconnect} title="Disconnect">
+              <Unplug size={11} /> Disconnect
+            </button>
+          )}
+          {(status === 'disconnected' || status === 'idle') && (
+            <button className="btn-ghost h-5 px-1.5 text-2xs text-accent hover:text-accent-hover" onClick={onReconnect}>
+              {tab.profile ? <RotateCw size={11} /> : <Plug size={11} />} {tab.profile ? 'Reconnect' : 'Connect'}
+            </button>
+          )}
+        </>
+      ) : (
+        <span>{openTabs === 0 ? 'Ready' : ''}</span>
+      )}
+
+      <div className="flex-1" />
+
+      {showCaptureNotice(protection) && (
+        <button
+          className={`flex items-center gap-1.5 h-5 px-2 rounded-md transition-colors min-w-0 ${
+            protection.error ? 'text-amber-300 hover:bg-amber-400/10' : 'text-emerald-300/90 hover:bg-emerald-400/10'
+          }`}
+          onClick={onOpenSecurity}
+          title={
+            protection.error
+              ? `Could not hide the window: ${protection.error}`
+              : protection.sharing
+                ? `Screen sharing detected (${protection.sharingApps.join(', ')}). Terminyxx is hidden from it. Click to change this in Settings.`
+                : 'The window is hidden from screen sharing. Click to change this in Settings.'
+          }
+        >
+          {protection.error ? <ShieldAlert size={11} className="flex-shrink-0" /> : <ShieldCheck size={11} className="flex-shrink-0" />}
+          <span className="truncate">
+            {protection.error ? 'Screen sharing protection failed' : protection.sharing ? 'Screen sharing detected · Terminyxx is hidden' : 'Hidden from screen sharing'}
+            <span className="text-gray-500"> · you can turn this off in Settings</span>
+          </span>
+        </button>
+      )}
+
+      <button
+        className={`flex items-center gap-1 h-5 px-2 rounded-md transition-colors flex-shrink-0 ${
+          masking ? 'bg-amber-400/15 text-amber-300 hover:bg-amber-400/25' : 'hover:bg-white/[0.06] hover:text-gray-300'
+        }`}
+        onClick={onToggleMasking}
+        title={masking ? 'Secrets in terminal output are masked. Click to show them (Ctrl+Shift+M)' : 'Mask secrets in terminal output (Ctrl+Shift+M)'}
+        aria-pressed={masking}
+      >
+        <EyeOff size={11} />
+        {masking && 'Masking secrets'}
+      </button>
+      {lockConfigured && (
+        <button className="flex items-center h-5 px-1.5 rounded-md transition-colors hover:bg-white/[0.06] hover:text-gray-300 flex-shrink-0" onClick={onLock} title="Lock Terminyxx (Ctrl+Shift+L)">
+          <Lock size={11} />
+        </button>
+      )}
+
+      {status === 'connected' && size && (
+        <span className="font-mono tabular-nums">
+          {size.cols}×{size.rows}
+        </span>
+      )}
+      {tab && <span>UTF-8</span>}
+      {tab && <span>xterm-256color</span>}
+      {status === 'connected' && (
+        <button
+          className={`flex items-center gap-1 h-5 px-2 rounded-md transition-colors ${
+            sftpOpen ? 'bg-accent/15 text-accent' : 'hover:bg-white/[0.06] hover:text-gray-300'
+          }`}
+          onClick={onToggleSftp}
+          title="Toggle SFTP (Ctrl+Shift+F)"
+        >
+          <FolderTree size={11} /> SFTP
+        </button>
+      )}
+    </footer>
+  );
+}

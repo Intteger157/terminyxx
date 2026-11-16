@@ -1,80 +1,179 @@
 package connection
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
 	"sync"
+	"sync/atomic"
 )
 
 type EventEmitter interface {
 	Emit(event string, data ...interface{})
 }
 
+var ErrNotFound = errors.New("connection not found")
+
 type ConnectionManager struct {
 	mu          sync.RWMutex
 	connections map[string]*ManagedConnection
 	emitter     EventEmitter
+	hostKeys    *HostKeyStore
+	gate        *OutputGate
+	policy      atomic.Pointer[Policy]
+
+	jobsMu sync.Mutex
+	jobs   map[string]context.CancelFunc
 }
 
-func NewConnectionManager(emitter EventEmitter) *ConnectionManager {
-	return &ConnectionManager{
+// NewConnectionManager creates a manager. hostKeys may be nil, which
+// disables host key verification (used only in tests).
+func NewConnectionManager(emitter EventEmitter, hostKeys *HostKeyStore) *ConnectionManager {
+	m := &ConnectionManager{
 		connections: make(map[string]*ManagedConnection),
 		emitter:     emitter,
+		hostKeys:    hostKeys,
+		gate:        NewOutputGate(),
+		jobs:        make(map[string]context.CancelFunc),
 	}
+	p := DefaultPolicy()
+	m.policy.Store(&p)
+	return m
+}
+
+// SetPolicy applies new security settings. Masking takes effect on the next
+// chunk of output; algorithm and agent settings on the next connection.
+func (m *ConnectionManager) SetPolicy(p Policy) {
+	m.policy.Store(&p)
+}
+
+func (m *ConnectionManager) Policy() Policy {
+	return *m.policy.Load()
+}
+
+func (m *ConnectionManager) maskOptions() MaskOptions {
+	p := m.policy.Load()
+	return MaskOptions{Enabled: p.MaskOutput, IPs: p.MaskIPs}
+}
+
+// ErrLocked is returned for terminal input while the app is locked.
+var ErrLocked = errors.New("app is locked")
+
+// SetLocked pauses (true) or resumes terminal output. While locked, output
+// is queued in memory and keyboard input is refused; sessions stay open.
+func (m *ConnectionManager) SetLocked(locked bool) {
+	m.gate.SetLocked(locked)
+}
+
+// TrustedHosts lists known_hosts entries (the app's own, then OpenSSH's).
+func (m *ConnectionManager) TrustedHosts() ([]TrustedHost, error) {
+	if m.hostKeys == nil {
+		return []TrustedHost{}, nil
+	}
+	return m.hostKeys.List()
+}
+
+// RemoveTrustedHost revokes one entry of the app's known_hosts.
+func (m *ConnectionManager) RemoveTrustedHost(id string) error {
+	if m.hostKeys == nil {
+		return ErrNotFound
+	}
+	return m.hostKeys.Remove(id)
 }
 
 func (m *ConnectionManager) Connect(req ConnectRequest) error {
 	if req.ID == "" {
 		return errors.New("connection id is required")
 	}
+	if req.Host == "" {
+		return errors.New("host is required")
+	}
+
+	m.emitter.Emit("connection:state:"+req.ID, "connecting")
+	// Dial without holding the lock so other tabs stay responsive.
+	conn, err := newManagedConnection(req, m)
+	if err != nil {
+		m.emitter.Emit("connection:state:"+req.ID, "disconnected")
+		return err
+	}
 
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if existing, ok := m.connections[req.ID]; ok {
-		_ = existing.Close()
-		delete(m.connections, req.ID)
-	}
-
-	conn, err := newManagedConnection(req, m.emitter)
-	if err != nil {
-		return fmt.Errorf("connect: %w", err)
-	}
-
+	old := m.connections[req.ID]
 	m.connections[req.ID] = conn
+	m.mu.Unlock()
+	if old != nil {
+		_ = old.Close()
+	}
+
+	go func() {
+		conn.Wait()
+		m.handleClosed(req.ID, conn)
+	}()
+
 	m.emitter.Emit("connection:state:"+req.ID, "connected")
 	return nil
 }
 
+// handleClosed runs when a connection drops for any reason (shell exit,
+// network loss, keepalive timeout, explicit disconnect).
+func (m *ConnectionManager) handleClosed(id string, conn *ManagedConnection) {
+	m.mu.Lock()
+	current := m.connections[id] == conn
+	if current {
+		delete(m.connections, id)
+	}
+	m.mu.Unlock()
+	_ = conn.Close()
+	if current {
+		m.emitter.Emit("connection:state:"+id, "disconnected")
+	}
+}
+
 func (m *ConnectionManager) Disconnect(id string) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	conn, ok := m.connections[id]
-	if !ok {
-		return errors.New("connection not found")
-	}
-
-	err := conn.Close()
 	delete(m.connections, id)
+	m.mu.Unlock()
+	if !ok {
+		return nil
+	}
+	err := conn.Close()
 	m.emitter.Emit("connection:state:"+id, "disconnected")
 	return err
 }
 
-func (m *ConnectionManager) getConnection(id string) (*ManagedConnection, error) {
+func (m *ConnectionManager) get(id string) (*ManagedConnection, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-
 	conn, ok := m.connections[id]
 	if !ok {
-		return nil, errors.New("connection not found")
+		return nil, ErrNotFound
 	}
 	return conn, nil
 }
 
+func (m *ConnectionManager) sftp(id string) (*SFTPBridge, error) {
+	conn, err := m.get(id)
+	if err != nil {
+		return nil, err
+	}
+	return conn.SFTP()
+}
+
+func (m *ConnectionManager) StartShell(id string, cols, rows int) error {
+	conn, err := m.get(id)
+	if err != nil {
+		return err
+	}
+	return conn.StartShell(cols, rows)
+}
+
 func (m *ConnectionManager) WriteInput(id, data string) error {
-	conn, err := m.getConnection(id)
+	if m.gate.Locked() {
+		return ErrLocked
+	}
+	conn, err := m.get(id)
 	if err != nil {
 		return err
 	}
@@ -82,99 +181,114 @@ func (m *ConnectionManager) WriteInput(id, data string) error {
 }
 
 func (m *ConnectionManager) ResizePTY(id string, cols, rows int) error {
-	conn, err := m.getConnection(id)
+	conn, err := m.get(id)
 	if err != nil {
 		return err
 	}
 	return conn.ResizePTY(cols, rows)
 }
 
-func (m *ConnectionManager) ListDir(id, path string) ([]FileEntry, error) {
-	conn, err := m.getConnection(id)
+func (m *ConnectionManager) ListDir(id, p string) ([]FileEntry, error) {
+	b, err := m.sftp(id)
 	if err != nil {
 		return nil, err
 	}
-	return conn.ListRemoteDir(path)
+	return b.ListDir(p)
 }
 
-func (m *ConnectionManager) Mkdir(id, path string) error {
-	conn, err := m.getConnection(id)
+func (m *ConnectionManager) Mkdir(id, p string) error {
+	b, err := m.sftp(id)
 	if err != nil {
 		return err
 	}
-	return conn.MkdirRemote(path)
+	return b.Mkdir(p)
 }
 
-func (m *ConnectionManager) Remove(id, path string) error {
-	conn, err := m.getConnection(id)
+func (m *ConnectionManager) Remove(id, p string) error {
+	b, err := m.sftp(id)
 	if err != nil {
 		return err
 	}
-	return conn.RemoveRemote(path)
+	return b.Remove(p)
 }
 
 func (m *ConnectionManager) Rename(id, oldPath, newPath string) error {
-	conn, err := m.getConnection(id)
+	b, err := m.sftp(id)
 	if err != nil {
 		return err
 	}
-	return conn.RenameRemote(oldPath, newPath)
+	return b.Rename(oldPath, newPath)
 }
 
-func (m *ConnectionManager) UploadFile(id, localPath, remotePath string) error {
-	conn, err := m.getConnection(id)
-	if err != nil {
-		return err
-	}
-	return conn.CopyLocalToRemote(localPath, remotePath, m.emitter)
-}
-
-func (m *ConnectionManager) DownloadFile(id, remotePath, localPath string) error {
-	conn, err := m.getConnection(id)
-	if err != nil {
-		return err
-	}
-	return conn.CopyRemoteToLocal(remotePath, localPath, m.emitter)
-}
-
-func (m *ConnectionManager) ReadRemoteFile(id, path string) (string, error) {
-	conn, err := m.getConnection(id)
+func (m *ConnectionManager) ReadRemoteFile(id, p string) (string, error) {
+	b, err := m.sftp(id)
 	if err != nil {
 		return "", err
 	}
-	return conn.ReadRemoteFile(path)
+	return b.ReadFile(p)
 }
 
 func (m *ConnectionManager) GetRemoteHome(id string) (string, error) {
-	conn, err := m.getConnection(id)
+	b, err := m.sftp(id)
 	if err != nil {
 		return "", err
 	}
-	return conn.RemoteHome()
+	return b.Getwd()
+}
+
+// Transfer runs a copy/move job; it returns when the job ends. CancelTransfer
+// with the same JobID stops it.
+func (m *ConnectionManager) Transfer(id string, req TransferRequest) error {
+	if req.JobID == "" {
+		return errors.New("job id is required")
+	}
+	b, err := m.sftp(id)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	m.jobsMu.Lock()
+	if _, exists := m.jobs[req.JobID]; exists {
+		m.jobsMu.Unlock()
+		cancel()
+		return fmt.Errorf("job %s already running", req.JobID)
+	}
+	m.jobs[req.JobID] = cancel
+	m.jobsMu.Unlock()
+	defer func() {
+		m.jobsMu.Lock()
+		delete(m.jobs, req.JobID)
+		m.jobsMu.Unlock()
+		cancel()
+	}()
+	return b.Transfer(ctx, req, id, m.emitter)
+}
+
+func (m *ConnectionManager) CancelTransfer(jobID string) {
+	m.jobsMu.Lock()
+	cancel := m.jobs[jobID]
+	m.jobsMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 }
 
 func (m *ConnectionManager) GetLocalHome() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return home, nil
-}
-
-func (m *ConnectionManager) ListLocalDir(path string) ([]FileEntry, error) {
-	return ListLocalDir(path)
-}
-
-func (m *ConnectionManager) ReadLocalFile(path string) (string, error) {
-	return ReadLocalFile(path, 512*1024)
+	return os.UserHomeDir()
 }
 
 func (m *ConnectionManager) CloseAll() {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.jobsMu.Lock()
+	for _, cancel := range m.jobs {
+		cancel()
+	}
+	m.jobsMu.Unlock()
 
-	for id, conn := range m.connections {
+	m.mu.Lock()
+	conns := m.connections
+	m.connections = make(map[string]*ManagedConnection)
+	m.mu.Unlock()
+	for _, conn := range conns {
 		_ = conn.Close()
-		delete(m.connections, id)
 	}
 }
