@@ -1,27 +1,154 @@
 package connection
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"io"
-	"os"
+	"net"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/agent"
 )
 
+const (
+	dialTimeout       = 15 * time.Second
+	keepaliveInterval = 30 * time.Second
+	keepaliveMaxMiss  = 3
+)
+
+// ManagedConnection is one SSH client shared by the tab's shell and SFTP.
 type ManagedConnection struct {
-	mu        sync.RWMutex
-	ID        string
-	Config    ConnectRequest
-	client    *ssh.Client
-	pty       *PTYSession
-	sftp      *SFTPBridge
-	state     ConnectionState
-	createdAt time.Time
-	cancel    context.CancelFunc
+	mu      sync.RWMutex
+	ID      string
+	client  *ssh.Client
+	pty     *PTYSession
+	sftp    *SFTPBridge
+	state   ConnectionState
+	emitter EventEmitter
+	stop    chan struct{}
+	once    sync.Once
+
+	gate *OutputGate
+	mask func() MaskOptions
+	// agentConn serves forwarded agent requests; nil without forwarding.
+	agentConn io.Closer
+}
+
+func dialSSH(req ConnectRequest, hostKeys *HostKeyStore, policy Policy) (*ssh.Client, error) {
+	port := req.Port
+	if port == 0 {
+		port = 22
+	}
+	addr := net.JoinHostPort(req.Host, strconv.Itoa(port))
+
+	auths, cleanup, err := buildAuthMethods(req)
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
+
+	config := &ssh.ClientConfig{
+		User:    req.Username,
+		Auth:    auths,
+		Timeout: dialTimeout,
+	}
+	if hostKeys != nil {
+		cb, algos, err := hostKeys.Callback(addr, req.AcceptHostKey, req.ReplaceHostKey)
+		if err != nil {
+			return nil, err
+		}
+		config.HostKeyCallback = cb
+		config.HostKeyAlgorithms = algos
+	} else {
+		config.HostKeyCallback = ssh.InsecureIgnoreHostKey()
+	}
+	if policy.StrictAlgorithms && !req.AllowLegacyAlgorithms {
+		applyAlgorithms(config, config.HostKeyAlgorithms)
+	} else {
+		legacyAlgorithms(config)
+	}
+
+	client, err := ssh.Dial("tcp", addr, config)
+	if err != nil {
+		var hk *HostKeyError
+		if errors.As(err, &hk) {
+			return nil, hk
+		}
+		if policy.StrictAlgorithms && !req.AllowLegacyAlgorithms && strings.Contains(err.Error(), "no common algorithm") {
+			return nil, fmt.Errorf("%s|%w", LegacyAlgorithmsPrefix, err)
+		}
+		return nil, err
+	}
+	return client, nil
+}
+
+// LegacyAlgorithmsPrefix marks a handshake that failed because the server
+// only offers algorithms the "modern algorithms only" setting disables.
+const LegacyAlgorithmsPrefix = "LEGACY_ALGORITHMS_REQUIRED"
+
+func newManagedConnection(req ConnectRequest, m *ConnectionManager) (*ManagedConnection, error) {
+	policy := m.Policy()
+	client, err := dialSSH(req, m.hostKeys, policy)
+	if err != nil {
+		return nil, err
+	}
+	c := &ManagedConnection{
+		ID:      req.ID,
+		client:  client,
+		state:   StateConnected,
+		emitter: m.emitter,
+		stop:    make(chan struct{}),
+		gate:    m.gate,
+		mask:    m.maskOptions,
+	}
+	if req.AgentForwarding && policy.AllowAgentForwarding {
+		if conn := dialAgent(); conn != nil {
+			if err := agent.ForwardToAgent(client, agent.NewClient(conn)); err == nil {
+				c.agentConn = conn
+			} else {
+				conn.Close()
+			}
+		}
+	}
+	go c.keepalive()
+	return c, nil
+}
+
+func (c *ManagedConnection) keepalive() {
+	t := time.NewTicker(keepaliveInterval)
+	defer t.Stop()
+	missed := 0
+	for {
+		select {
+		case <-c.stop:
+			return
+		case <-t.C:
+			client := c.Client()
+			if client == nil {
+				return
+			}
+			if _, _, err := client.SendRequest("keepalive@openssh.com", true, nil); err != nil {
+				missed++
+				if missed >= keepaliveMaxMiss {
+					_ = client.Close()
+					return
+				}
+			} else {
+				missed = 0
+			}
+		}
+	}
+}
+
+// Wait blocks until the underlying SSH connection is gone.
+func (c *ManagedConnection) Wait() {
+	if client := c.Client(); client != nil {
+		_ = client.Wait()
+	}
 }
 
 func (c *ManagedConnection) State() ConnectionState {
@@ -30,32 +157,42 @@ func (c *ManagedConnection) State() ConnectionState {
 	return c.state
 }
 
-func (c *ManagedConnection) EnsureSFTP() (*SFTPBridge, error) {
+func (c *ManagedConnection) Client() *ssh.Client {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.client
+}
+
+// StartShell opens the PTY once; later calls only resize it. The frontend
+// calls it after subscribing to output so the login banner isn't lost.
+func (c *ManagedConnection) StartShell(cols, rows int) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-
-	if c.sftp != nil {
-		return c.sftp, nil
-	}
 	if c.client == nil {
-		return nil, errors.New("not connected")
+		return errors.New("not connected")
 	}
-
-	bridge, err := NewSFTPBridge(c.client)
+	if c.pty != nil {
+		return c.pty.Resize(cols, rows)
+	}
+	client := c.client
+	opts := ptyOptions{gate: c.gate, mask: c.mask, forwardAgent: c.agentConn != nil}
+	pty, err := NewPTYSession(client, c.emitter, c.ID, cols, rows, opts, func() {
+		// Shell exited (e.g. `exit`): drop the whole connection.
+		_ = client.Close()
+	})
 	if err != nil {
-		return nil, err
+		return fmt.Errorf("start shell: %w", err)
 	}
-	c.sftp = bridge
-	return c.sftp, nil
+	c.pty = pty
+	return nil
 }
 
 func (c *ManagedConnection) WriteInput(data string) error {
 	c.mu.RLock()
 	pty := c.pty
 	c.mu.RUnlock()
-
 	if pty == nil {
-		return errors.New("pty session not active")
+		return errors.New("shell not started")
 	}
 	_, err := pty.Write([]byte(data))
 	return err
@@ -65,20 +202,36 @@ func (c *ManagedConnection) ResizePTY(cols, rows int) error {
 	c.mu.RLock()
 	pty := c.pty
 	c.mu.RUnlock()
-
 	if pty == nil {
-		return errors.New("pty session not active")
+		return nil
 	}
 	return pty.Resize(cols, rows)
 }
 
-func (c *ManagedConnection) Close() error {
+// SFTP returns the SFTP client, creating it over the existing SSH
+// connection on first use.
+func (c *ManagedConnection) SFTP() (*SFTPBridge, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-
-	if c.cancel != nil {
-		c.cancel()
+	if c.sftp != nil {
+		return c.sftp, nil
 	}
+	if c.client == nil {
+		return nil, errors.New("not connected")
+	}
+	bridge, err := NewSFTPBridge(c.client)
+	if err != nil {
+		return nil, err
+	}
+	c.sftp = bridge
+	return bridge, nil
+}
+
+func (c *ManagedConnection) Close() error {
+	c.once.Do(func() { close(c.stop) })
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if c.pty != nil {
 		_ = c.pty.Close()
 		c.pty = nil
@@ -87,190 +240,15 @@ func (c *ManagedConnection) Close() error {
 		_ = c.sftp.Close()
 		c.sftp = nil
 	}
+	c.state = StateDisconnected
+	if c.agentConn != nil {
+		_ = c.agentConn.Close()
+		c.agentConn = nil
+	}
 	if c.client != nil {
 		err := c.client.Close()
 		c.client = nil
-		c.state = StateDisconnected
 		return err
-	}
-	c.state = StateDisconnected
-	return nil
-}
-
-func buildSSHConfig(req ConnectRequest) (*ssh.ClientConfig, error) {
-	var auths []ssh.AuthMethod
-
-	switch req.AuthType {
-	case "key":
-		keyData, err := os.ReadFile(req.KeyPath)
-		if err != nil {
-			return nil, fmt.Errorf("read key file: %w", err)
-		}
-		signer, err := ssh.ParsePrivateKey(keyData)
-		if err != nil {
-			return nil, fmt.Errorf("parse private key: %w", err)
-		}
-		auths = append(auths, ssh.PublicKeys(signer))
-	default:
-		auths = append(auths, ssh.Password(req.Password))
-	}
-
-	// TODO: replace with known_hosts verification in Phase 5
-	return &ssh.ClientConfig{
-		User:            req.Username,
-		Auth:            auths,
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
-		Timeout:         15 * time.Second,
-	}, nil
-}
-
-func dialSSH(req ConnectRequest) (*ssh.Client, error) {
-	config, err := buildSSHConfig(req)
-	if err != nil {
-		return nil, err
-	}
-
-	port := req.Port
-	if port == 0 {
-		port = 22
-	}
-
-	addr := fmt.Sprintf("%s:%d", req.Host, port)
-	return ssh.Dial("tcp", addr, config)
-}
-
-func newManagedConnection(req ConnectRequest, emitter EventEmitter) (*ManagedConnection, error) {
-	_, cancel := context.WithCancel(context.Background())
-
-	conn := &ManagedConnection{
-		ID:        req.ID,
-		Config:    req,
-		state:     StateConnecting,
-		createdAt: time.Now(),
-		cancel:    cancel,
-	}
-
-	client, err := dialSSH(req)
-	if err != nil {
-		cancel()
-		return nil, err
-	}
-	conn.client = client
-
-	pty, err := NewPTYSession(client, emitter, req.ID, 120, 30)
-	if err != nil {
-		_ = client.Close()
-		cancel()
-		return nil, err
-	}
-	conn.pty = pty
-	conn.state = StateConnected
-
-	return conn, nil
-}
-
-func (c *ManagedConnection) SFTPOrError() (*SFTPBridge, error) {
-	bridge, err := c.EnsureSFTP()
-	if err != nil {
-		return nil, err
-	}
-	return bridge, nil
-}
-
-func (c *ManagedConnection) IsClosed() bool {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.state == StateDisconnected && c.client == nil
-}
-
-func (c *ManagedConnection) RemoteHome() (string, error) {
-	bridge, err := c.SFTPOrError()
-	if err != nil {
-		return "", err
-	}
-	return bridge.Getwd()
-}
-
-func (c *ManagedConnection) CopyLocalToRemote(localPath, remotePath string, emitter EventEmitter) error {
-	bridge, err := c.SFTPOrError()
-	if err != nil {
-		return err
-	}
-	return bridge.Upload(localPath, remotePath, emitter, c.ID)
-}
-
-func (c *ManagedConnection) CopyRemoteToLocal(remotePath, localPath string, emitter EventEmitter) error {
-	bridge, err := c.SFTPOrError()
-	if err != nil {
-		return err
-	}
-	return bridge.Download(remotePath, localPath, emitter, c.ID)
-}
-
-func (c *ManagedConnection) ReadRemoteFile(filePath string) (string, error) {
-	bridge, err := c.SFTPOrError()
-	if err != nil {
-		return "", err
-	}
-	return bridge.ReadFile(filePath, 512*1024)
-}
-
-func (c *ManagedConnection) ListRemoteDir(dirPath string) ([]FileEntry, error) {
-	bridge, err := c.SFTPOrError()
-	if err != nil {
-		return nil, err
-	}
-	return bridge.ListDir(dirPath)
-}
-
-func (c *ManagedConnection) MkdirRemote(dirPath string) error {
-	bridge, err := c.SFTPOrError()
-	if err != nil {
-		return err
-	}
-	return bridge.Mkdir(dirPath)
-}
-
-func (c *ManagedConnection) RemoveRemote(filePath string) error {
-	bridge, err := c.SFTPOrError()
-	if err != nil {
-		return err
-	}
-	return bridge.Remove(filePath)
-}
-
-func (c *ManagedConnection) RenameRemote(oldPath, newPath string) error {
-	bridge, err := c.SFTPOrError()
-	if err != nil {
-		return err
-	}
-	return bridge.Rename(oldPath, newPath)
-}
-
-func (c *ManagedConnection) WriteInputSafe(data string) error {
-	if data == "" {
-		return nil
-	}
-	return c.WriteInput(data)
-}
-
-func (c *ManagedConnection) Client() *ssh.Client {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.client
-}
-
-func (c *ManagedConnection) PTYActive() bool {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.pty != nil
-}
-
-func (c *ManagedConnection) Stdin() io.WriteCloser {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	if c.pty == nil {
-		return nil
 	}
 	return nil
 }

@@ -11,4 +11,6 @@ type RDPProfile struct {
 	Width      int    `json:"width"`
 	Height     int    `json:"height"`
 	Fullscreen bool   `json:"fullscreen"`
+	FolderID   string `json:"folderId"`
+	SortOrder  int    `json:"sortOrder"`
 }

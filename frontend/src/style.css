@@ -1,45 +1,149 @@
+@import '@fontsource-variable/inter';
+@import '@fontsource-variable/jetbrains-mono';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+/* Design tokens (RGB triplets so Tailwind can apply alpha). */
+:root {
+  --app: 9 10 13;          /* window chrome: title bar, sidebar */
+  --surface: 14 15 19;     /* content cards: terminal, panes */
+  --raised: 20 22 27;      /* popovers, dialogs, inputs */
+  --overlay: 30 32 39;     /* hover */
+  --border: 38 40 48;
+  --border-strong: 54 57 68;
+  --accent: 132 116 255;   /* violet */
+  --accent-hover: 150 136 255;
+  --accent-soft: 132 116 255;
+  color-scheme: dark;
+}
+
 @layer base {
-  html, body, #root {
+  html,
+  body,
+  #root {
     @apply h-full w-full m-0 p-0 overflow-hidden;
   }
 
   body {
-    @apply bg-surface text-gray-100 font-sans antialiased;
+    @apply bg-app text-gray-200 font-sans antialiased text-[13px];
+    font-feature-settings: 'cv11', 'ss01', 'ss03';
   }
 
   * {
     @apply box-border;
   }
+
+  ::selection {
+    background: rgb(var(--accent) / 0.35);
+  }
+
+  :focus {
+    outline: none;
+  }
+  button:focus-visible,
+  [role="tab"]:focus-visible {
+    outline: 2px solid rgb(var(--accent) / 0.7);
+    outline-offset: 1px;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgb(var(--border-strong));
+    border-radius: 999px;
+    border: 3px solid transparent;
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: rgb(82 86 100);
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
 }
 
 @layer components {
+  .btn {
+    @apply inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-lg text-[13px] font-medium transition-all duration-150 select-none disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
   .btn-primary {
-    @apply px-3 py-1.5 bg-accent hover:bg-accent-hover text-white rounded text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
+    @apply btn text-white bg-accent hover:bg-accent-hover active:scale-[0.98];
+    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.18), 0 1px 2px rgb(0 0 0 / 0.4), 0 4px 16px -6px rgb(var(--accent) / 0.6);
+  }
+
+  .btn-danger {
+    @apply btn text-white bg-red-500/90 hover:bg-red-500 active:scale-[0.98];
+    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.15), 0 4px 16px -6px rgb(239 68 68 / 0.6);
+  }
+
+  .btn-secondary {
+    @apply btn text-gray-200 bg-white/[0.06] hover:bg-white/[0.1] border border-white/[0.06];
   }
 
   .btn-ghost {
-    @apply px-2 py-1 text-gray-400 hover:text-white hover:bg-surface-overlay rounded text-sm transition-colors;
+    @apply inline-flex items-center justify-center gap-1.5 px-2 py-1 rounded-md text-gray-400 hover:text-gray-100 hover:bg-white/[0.06] text-[13px] transition-colors;
+  }
+
+  .icon-btn {
+    @apply inline-flex items-center justify-center w-7 h-7 rounded-md text-gray-400 hover:text-gray-100 hover:bg-white/[0.07] transition-colors;
   }
 
   .input-field {
-    @apply w-full px-3 py-2 bg-surface border border-border rounded text-sm text-gray-100 placeholder-gray-500 focus:outline-none focus:border-accent;
+    @apply w-full h-9 px-3 bg-black/30 border border-border rounded-lg text-[13px] text-gray-100 placeholder-gray-500 transition-colors
+      hover:border-border-strong focus:outline-none focus:border-accent/70 focus:ring-4 focus:ring-accent/15;
+  }
+
+  .kbd {
+    @apply inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded border border-white/10 bg-white/[0.04] text-2xs font-medium text-gray-400 font-sans;
+  }
+
+  .card {
+    @apply bg-surface border border-border rounded-xl;
+  }
+
+  .label {
+    @apply block text-2xs font-medium uppercase tracking-[0.06em] text-gray-500 mb-1.5;
   }
 }
 
-/* xterm.js overrides */
+/* Wails frameless window: drag regions. */
+.drag {
+  --wails-draggable: drag;
+}
+.no-drag {
+  --wails-draggable: no-drag;
+}
+
+/* xterm.js */
 .xterm {
-  padding: 4px;
+  padding: 10px 4px 10px 14px;
+  height: 100%;
 }
-
+.xterm .xterm-viewport {
+  background-color: transparent !important;
+}
 .xterm-viewport::-webkit-scrollbar {
-  width: 8px;
+  width: 10px;
 }
 
-.xterm-viewport::-webkit-scrollbar-thumb {
-  background: #2d3a4f;
-  border-radius: 4px;
+/* Visual bell: a short flash over the terminal. */
+.terminal-bell::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  animation: terminal-bell 240ms ease-out forwards;
+}
+@keyframes terminal-bell {
+  from {
+    background: rgb(255 255 255 / 0.1);
+  }
+  to {
+    background: rgb(255 255 255 / 0);
+  }
 }

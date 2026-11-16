@@ -2,10 +2,18 @@ package main
 
 import (
 	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"reflect"
+	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"terminyxx/internal/capture"
 	"terminyxx/internal/connection"
+	"terminyxx/internal/importers"
 	"terminyxx/internal/rdp"
+	"terminyxx/internal/security"
 	"terminyxx/internal/store"
 )
 
@@ -22,6 +30,8 @@ type App struct {
 	connMgr *connection.ConnectionManager
 	data    *store.Store
 	rdp     rdp.Launcher
+	stop    chan struct{}
+	sec     securityState
 }
 
 func NewApp() *App {
@@ -31,18 +41,58 @@ func NewApp() *App {
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 
-	dataStore, err := store.New()
+	dataStore, err := store.New(store.NewOSKeyring())
 	if err != nil {
 		runtime.LogError(ctx, "failed to init store: "+err.Error())
 	} else {
 		a.data = dataStore
 	}
 
-	a.connMgr = connection.NewConnectionManager(&WailsEmitter{ctx: ctx})
+	knownHosts := "known_hosts"
+	if dir, err := store.DataDir(); err == nil {
+		knownHosts = filepath.Join(dir, "known_hosts")
+	}
+	hostKeys := connection.NewHostKeyStore(knownHosts, connection.DefaultUserKnownHosts())
+	a.connMgr = connection.NewConnectionManager(&WailsEmitter{ctx: ctx}, hostKeys)
 	a.rdp = rdp.NewLauncher()
+
+	a.stop = make(chan struct{})
+	a.initSecurity()
+	go a.watchScreenSharing()
+}
+
+// watchScreenSharing polls for screen sharing and emits "capture:sharing"
+// (a capture.SharingState) when it starts or stops, so the UI can show the
+// "hidden from screen sharing" notice only while a share is running.
+func (a *App) watchScreenSharing() {
+	last := capture.DetectSharing()
+	if !last.Supported {
+		return
+	}
+	t := time.NewTicker(2 * time.Second)
+	defer t.Stop()
+	for {
+		select {
+		case <-a.stop:
+			return
+		case <-t.C:
+			cur := capture.DetectSharing()
+			if !reflect.DeepEqual(cur, last) {
+				last = cur
+				runtime.EventsEmit(a.ctx, "capture:sharing", cur)
+			}
+		}
+	}
 }
 
 func (a *App) shutdown(ctx context.Context) {
+	if a.stop != nil {
+		close(a.stop)
+	}
+	// Don't leave a copied secret on the clipboard after the app is gone.
+	if a.sec.clip != nil {
+		a.sec.clip.ClearNow()
+	}
 	if a.connMgr != nil {
 		a.connMgr.CloseAll()
 	}
@@ -54,11 +104,27 @@ func (a *App) shutdown(ctx context.Context) {
 // SSH bindings
 
 func (a *App) SSHConnect(req connection.ConnectRequest) error {
+	if a.sec.lock != nil && a.sec.lock.Locked() {
+		return connection.ErrLocked
+	}
+	// Saved hosts keep their password in the OS keychain; the frontend never
+	// receives it, so resolve it here.
+	if req.Password == "" && req.ProfileID != "" && a.data != nil {
+		if pw, err := a.data.SSHPassword(req.ProfileID); err == nil {
+			req.Password = pw
+		}
+	}
 	return a.connMgr.Connect(req)
 }
 
 func (a *App) SSHDisconnect(id string) error {
 	return a.connMgr.Disconnect(id)
+}
+
+// SSHStartShell opens the PTY; the terminal calls it once it is listening
+// for output, and again on remount (then it only resizes).
+func (a *App) SSHStartShell(id string, cols, rows int) error {
+	return a.connMgr.StartShell(id, cols, rows)
 }
 
 func (a *App) SSHWriteInput(id, data string) error {
@@ -68,6 +134,8 @@ func (a *App) SSHWriteInput(id, data string) error {
 func (a *App) SSHResizePTY(id string, cols, rows int) error {
 	return a.connMgr.ResizePTY(id, cols, rows)
 }
+
+// SFTP bindings
 
 func (a *App) SFTPListDir(id, path string) ([]connection.FileEntry, error) {
 	return a.connMgr.ListDir(id, path)
@@ -85,32 +153,53 @@ func (a *App) SFTPRename(id, oldPath, newPath string) error {
 	return a.connMgr.Rename(id, oldPath, newPath)
 }
 
-func (a *App) SFTPUpload(id, localPath, remotePath string) error {
-	return a.connMgr.UploadFile(id, localPath, remotePath)
-}
-
-func (a *App) SFTPDownload(id, remotePath, localPath string) error {
-	return a.connMgr.DownloadFile(id, remotePath, localPath)
-}
-
 func (a *App) SFTPReadFile(id, path string) (string, error) {
 	return a.connMgr.ReadRemoteFile(id, path)
+}
+
+func (a *App) SFTPTransfer(id string, req connection.TransferRequest) error {
+	return a.connMgr.Transfer(id, req)
+}
+
+func (a *App) SFTPCancelTransfer(jobID string) {
+	a.connMgr.CancelTransfer(jobID)
 }
 
 func (a *App) GetRemoteHome(id string) (string, error) {
 	return a.connMgr.GetRemoteHome(id)
 }
 
+// Local filesystem bindings
+
 func (a *App) GetLocalHome() (string, error) {
 	return a.connMgr.GetLocalHome()
 }
 
 func (a *App) ListLocalDir(path string) ([]connection.FileEntry, error) {
-	return a.connMgr.ListLocalDir(path)
+	return connection.ListLocalDir(path)
+}
+
+func (a *App) LocalParentDir(path string) string {
+	return connection.LocalParentDir(path)
 }
 
 func (a *App) ReadLocalFile(path string) (string, error) {
-	return a.connMgr.ReadLocalFile(path)
+	return connection.ReadLocalFile(path)
+}
+
+func (a *App) LocalMkdir(path string) error {
+	return connection.LocalMkdir(path)
+}
+
+func (a *App) LocalRemove(path string) error {
+	if path == "" {
+		return errors.New("empty path")
+	}
+	return connection.LocalRemove(path)
+}
+
+func (a *App) LocalRename(oldPath, newPath string) error {
+	return connection.LocalRename(oldPath, newPath)
 }
 
 // Profile store bindings
@@ -166,4 +255,127 @@ func (a *App) LaunchRDP(profileID string) error {
 		return err
 	}
 	return a.rdp.Launch(profile)
+}
+
+// SelectKeyFile opens a native file picker for a private key.
+func (a *App) SelectKeyFile() (string, error) {
+	dir := ""
+	if home, err := os.UserHomeDir(); err == nil {
+		dir = filepath.Join(home, ".ssh")
+	}
+	return runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
+		Title:            "Select private key",
+		DefaultDirectory: dir,
+	})
+}
+
+// Folder bindings
+
+// settingsKey holds the frontend's settings JSON (theme, font, highlighting…).
+const settingsKey = "app"
+
+// GetSettings returns the saved settings JSON, or "" if none were saved.
+func (a *App) GetSettings() (string, error) {
+	if a.data == nil {
+		return "", nil
+	}
+	return a.data.GetSetting(settingsKey)
+}
+
+// SaveSettings stores the settings JSON written by the frontend and applies
+// its security part (masking, algorithms, agent forwarding, clipboard…).
+func (a *App) SaveSettings(value string) error {
+	a.applySecurity(security.FromSettingsJSON(value))
+	if a.data == nil {
+		return nil
+	}
+	return a.data.SetSetting(settingsKey, value)
+}
+
+// SetCaptureProtection hides the window from screen capture and screen
+// sharing (true) or allows it again (false). The frontend calls it on startup
+// and whenever the "Hide from screen sharing" setting changes.
+func (a *App) SetCaptureProtection(enabled bool) error {
+	return capture.SetProtected(enabled)
+}
+
+// GetScreenSharing reports whether another app is capturing the screen now.
+func (a *App) GetScreenSharing() capture.SharingState {
+	return capture.DetectSharing()
+}
+
+func (a *App) ListFolders() ([]store.Folder, error) {
+	if a.data == nil {
+		return []store.Folder{}, nil
+	}
+	return a.data.ListFolders()
+}
+
+func (a *App) SaveFolder(f store.Folder) error {
+	if a.data == nil {
+		return errors.New("storage unavailable")
+	}
+	return a.data.SaveFolder(f)
+}
+
+func (a *App) DeleteFolder(id string) error {
+	if a.data == nil {
+		return errors.New("storage unavailable")
+	}
+	return a.data.DeleteFolder(id)
+}
+
+// MoveItem moves a folder, SSH or RDP host (kind "folder" | "ssh" | "rdp")
+// into parentID at index among its siblings; index -1 appends.
+func (a *App) MoveItem(kind, id, parentID string, index int) error {
+	if a.data == nil {
+		return errors.New("storage unavailable")
+	}
+	return a.data.MoveItem(kind, id, parentID, index)
+}
+
+// Import bindings
+
+// ListImportSources lists the clients hosts can be imported from on this
+// OS, those found on this computer first.
+func (a *App) ListImportSources() []importers.SourceInfo {
+	return importers.List()
+}
+
+// ReadImport reads hosts from a source; empty paths means its detected data.
+func (a *App) ReadImport(sourceID string, paths []string) (importers.Result, error) {
+	return importers.Read(sourceID, paths)
+}
+
+// PickImportPaths shows the file/folder dialog a source needs. It returns
+// nothing if the user cancels.
+func (a *App) PickImportPaths(sourceID string) ([]string, error) {
+	var info *importers.SourceInfo
+	for _, s := range importers.List() {
+		if s.ID == sourceID {
+			info = &s
+			break
+		}
+	}
+	if info == nil {
+		return nil, errors.New("unknown import source")
+	}
+	title := "Import from " + info.Name
+	filters := []runtime.FileFilter{{DisplayName: info.FilterName, Pattern: info.Filter}, {DisplayName: "All files", Pattern: "*.*"}}
+	switch info.Pick {
+	case "folder":
+		p, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{Title: title})
+		if err != nil || p == "" {
+			return []string{}, err
+		}
+		return []string{p}, nil
+	case "files":
+		return runtime.OpenMultipleFilesDialog(a.ctx, runtime.OpenDialogOptions{Title: title, Filters: filters})
+	default:
+		p, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{Title: title, Filters: filters})
+		if err != nil || p == "" {
+			return []string{}, err
+		}
+		return []string{p}, nil
+	}
 }
