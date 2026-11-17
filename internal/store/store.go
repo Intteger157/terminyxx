@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 
 	_ "modernc.org/sqlite"
 	"terminyxx/internal/rdp"
@@ -73,8 +74,13 @@ func New(secrets Secrets) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(appDir, 0o755); err != nil {
+	if err := os.MkdirAll(appDir, 0o700); err != nil {
 		return nil, err
+	}
+	// Older versions created the folder 0755; it holds the database,
+	// known_hosts and session recordings, so keep it private to the user.
+	if err := os.Chmod(appDir, 0o700); err != nil {
+		log.Printf("store: chmod %s: %v", appDir, err)
 	}
 	return Open(filepath.Join(appDir, "terminyxx.db"), secrets)
 }
@@ -106,7 +112,21 @@ func Open(path string, secrets Secrets) (*Store, error) {
 		return nil, err
 	}
 	s.moveLegacyPasswords()
+	restrictDBFiles(path)
 	return s, nil
+}
+
+// restrictDBFiles makes the database (and its journal files) readable by the
+// current user only. Older versions left them at the umask default (0644).
+func restrictDBFiles(path string) {
+	if path == "" || path == ":memory:" || strings.HasPrefix(path, "file:") {
+		return
+	}
+	for _, f := range []string{path, path + "-wal", path + "-shm", path + "-journal"} {
+		if err := os.Chmod(f, 0o600); err != nil && !errors.Is(err, os.ErrNotExist) {
+			log.Printf("store: chmod %s: %v", f, err)
+		}
+	}
 }
 
 func (s *Store) Close() error {

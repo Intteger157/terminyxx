@@ -3,7 +3,9 @@ package store
 import (
 	"database/sql"
 	"errors"
+	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"terminyxx/internal/rdp"
@@ -365,5 +367,21 @@ func TestSnippets(t *testing.T) {
 	must(t, s.DeleteSnippet("1"))
 	if l, _ = s.ListSnippets(); len(l) != 0 {
 		t.Fatal("not deleted")
+	}
+}
+
+func TestDatabaseFilePermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX permissions")
+	}
+	path := filepath.Join(t.TempDir(), "t.db")
+	must(t, os.WriteFile(path, nil, 0o644))
+	s, err := Open(path, NewMemorySecrets())
+	must(t, err)
+	defer s.Close()
+	fi, err := os.Stat(path)
+	must(t, err)
+	if fi.Mode().Perm() != 0o600 {
+		t.Fatalf("database mode = %v, want 0600", fi.Mode().Perm())
 	}
 }
