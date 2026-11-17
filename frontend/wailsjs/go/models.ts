@@ -783,6 +783,8 @@ export namespace store {
 	    folders: number;
 	    hosts: number;
 	    snippets: number;
+	    replaced: string[];
+	    flagsReset: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new ImportResult(source);
@@ -793,6 +795,8 @@ export namespace store {
 	        this.folders = source["folders"];
 	        this.hosts = source["hosts"];
 	        this.snippets = source["snippets"];
+	        this.replaced = source["replaced"];
+	        this.flagsReset = source["flagsReset"];
 	    }
 	}
 	export class Tunnel {
