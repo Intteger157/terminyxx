@@ -147,3 +147,10 @@
     background: rgb(255 255 255 / 0);
   }
 }
+
+/* Drop target while dragging server files over the local pane (SftpPanel). */
+[data-drag-hover] {
+  outline: 1px solid rgb(var(--accent));
+  outline-offset: -1px;
+  background-color: rgb(var(--accent) / 0.16);
+}

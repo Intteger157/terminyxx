@@ -91,11 +91,15 @@ export function ReadRecording(arg1:string):Promise<recording.Recording>;
 
 export function RemoveTrustedHost(arg1:string):Promise<void>;
 
+export function SFTPCancelDragOut(arg1:string):Promise<void>;
+
 export function SFTPCancelTransfer(arg1:string):Promise<void>;
 
 export function SFTPListDir(arg1:string,arg2:string):Promise<Array<connection.FileEntry>>;
 
 export function SFTPMkdir(arg1:string,arg2:string):Promise<void>;
+
+export function SFTPPrepareDragOut(arg1:string,arg2:Array<string>):Promise<string>;
 
 export function SFTPReadFile(arg1:string,arg2:string):Promise<string>;
 
@@ -104,6 +108,8 @@ export function SFTPReadForEdit(arg1:string,arg2:string):Promise<connection.Edit
 export function SFTPRemove(arg1:string,arg2:string):Promise<void>;
 
 export function SFTPRename(arg1:string,arg2:string,arg3:string):Promise<void>;
+
+export function SFTPStartDragOut(arg1:string):Promise<boolean>;
 
 export function SFTPTransfer(arg1:string,arg2:connection.TransferRequest):Promise<void>;
 
