@@ -1,4 +1,5 @@
 import { SSHConnect } from '../../wailsjs/go/main/App';
+import { connection } from '../../wailsjs/go/models';
 import type { SSHProfile } from '../types';
 import type { useDialogs } from '../components/ui/Dialogs';
 import { confirmChangedHostKey, confirmNewHostKey } from '../components/security/securityPrompts';
@@ -62,6 +63,7 @@ export async function connectWithPrompts(id: string, profile: SSHProfile, dialog
     replaceHostKey: false,
     // Saved hosts: the backend reads the password from the OS keychain.
     profileId: profile.hasPassword ? profile.id : '',
+    jumpFor: profile.id,
     allowLegacyAlgorithms: !!profile.allowLegacyAlgorithms,
     agentForwarding: !!profile.agentForwarding,
   };
@@ -69,7 +71,7 @@ export async function connectWithPrompts(id: string, profile: SSHProfile, dialog
 
   for (let attempt = 0; attempt < 6; attempt++) {
     try {
-      await SSHConnect(req);
+      await SSHConnect(connection.ConnectRequest.createFrom({ ...req, jump: [] }));
       return result;
     } catch (err) {
       const msg = String(err);

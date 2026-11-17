@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -33,6 +34,21 @@ type SSHProfile struct {
 	// AgentForwarding forwards the local ssh-agent to this host (only when
 	// the global setting allows agent forwarding).
 	AgentForwarding bool `json:"agentForwarding"`
+	// JumpProfileID is another saved host to connect through (ProxyJump).
+	JumpProfileID string `json:"jumpProfileId"`
+	// Tunnels are port forwards the user saved for this host.
+	Tunnels []Tunnel `json:"tunnels"`
+}
+
+// Tunnel is a saved port forward (same shape as connection.TunnelSpec).
+type Tunnel struct {
+	ID        string `json:"id"`
+	Kind      string `json:"kind"`
+	BindHost  string `json:"bindHost"`
+	BindPort  int    `json:"bindPort"`
+	DestHost  string `json:"destHost"`
+	DestPort  int    `json:"destPort"`
+	AutoStart bool   `json:"autoStart"`
 }
 
 type Folder struct {
@@ -146,6 +162,24 @@ CREATE TABLE settings (
 	`
 ALTER TABLE ssh_profiles ADD COLUMN allow_legacy_algorithms INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE ssh_profiles ADD COLUMN agent_forwarding INTEGER NOT NULL DEFAULT 0;`,
+		// v5: RDP session options (JSON; empty = defaults).
+		`
+ALTER TABLE rdp_profiles ADD COLUMN options TEXT NOT NULL DEFAULT '';`,
+		// v6: jump host and saved tunnels per SSH host.
+		`
+ALTER TABLE ssh_profiles ADD COLUMN jump_profile_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE ssh_profiles ADD COLUMN tunnels TEXT NOT NULL DEFAULT '';`,
+		// v7: command snippets.
+		`
+CREATE TABLE snippets (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    command TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    grp TEXT NOT NULL DEFAULT '',
+    execute INTEGER NOT NULL DEFAULT 1,
+    sort_order INTEGER NOT NULL DEFAULT 0
+);`,
 }
 
 func (s *Store) migrate() error {
@@ -203,13 +237,18 @@ func (s *Store) moveLegacyPasswords() {
 
 // --- SSH profiles ---
 
-const sshColumns = `id, name, host, port, username, auth_type, password, key_path, folder_id, sort_order, allow_legacy_algorithms, agent_forwarding`
+const sshColumns = `id, name, host, port, username, auth_type, password, key_path, folder_id, sort_order, allow_legacy_algorithms, agent_forwarding, jump_profile_id, tunnels`
 
 func scanSSH(row interface{ Scan(...any) error }) (SSHProfile, string, error) {
 	var p SSHProfile
 	var dbPassword string
 	var legacy, agentFwd int
-	err := row.Scan(&p.ID, &p.Name, &p.Host, &p.Port, &p.Username, &p.AuthType, &dbPassword, &p.KeyPath, &p.FolderID, &p.SortOrder, &legacy, &agentFwd)
+	var tunnels string
+	err := row.Scan(&p.ID, &p.Name, &p.Host, &p.Port, &p.Username, &p.AuthType, &dbPassword, &p.KeyPath, &p.FolderID, &p.SortOrder, &legacy, &agentFwd, &p.JumpProfileID, &tunnels)
+	p.Tunnels = []Tunnel{}
+	if tunnels != "" {
+		_ = json.Unmarshal([]byte(tunnels), &p.Tunnels)
+	}
 	p.AllowLegacyAlgorithms = legacy == 1
 	p.AgentForwarding = agentFwd == 1
 	return p, dbPassword, err
@@ -289,12 +328,23 @@ func (s *Store) SaveSSHProfile(p SSHProfile) error {
 		}
 	}
 
+	if p.JumpProfileID == p.ID {
+		p.JumpProfileID = ""
+	}
+	if p.Tunnels == nil {
+		p.Tunnels = []Tunnel{}
+	}
+	tunnelsJSON, err := json.Marshal(p.Tunnels)
+	if err != nil {
+		return err
+	}
+
 	if exists {
 		_, err = s.db.Exec(`
 UPDATE ssh_profiles SET name=?, host=?, port=?, username=?, auth_type=?, key_path=?, folder_id=?,
-    allow_legacy_algorithms=?, agent_forwarding=?
+    allow_legacy_algorithms=?, agent_forwarding=?, jump_profile_id=?, tunnels=?
 WHERE id=?`, p.Name, p.Host, p.Port, p.Username, p.AuthType, p.KeyPath, p.FolderID,
-			boolInt(p.AllowLegacyAlgorithms), boolInt(p.AgentForwarding), p.ID)
+			boolInt(p.AllowLegacyAlgorithms), boolInt(p.AgentForwarding), p.JumpProfileID, string(tunnelsJSON), p.ID)
 		if err != nil {
 			return err
 		}
@@ -308,9 +358,9 @@ WHERE id=?`, p.Name, p.Host, p.Port, p.Username, p.AuthType, p.KeyPath, p.Folder
 		return err
 	}
 
-	_, err = s.db.Exec(`INSERT INTO ssh_profiles (`+sshColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	_, err = s.db.Exec(`INSERT INTO ssh_profiles (`+sshColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		p.ID, p.Name, p.Host, p.Port, p.Username, p.AuthType, dbPassword, p.KeyPath, p.FolderID, sortOrder,
-		boolInt(p.AllowLegacyAlgorithms), boolInt(p.AgentForwarding))
+		boolInt(p.AllowLegacyAlgorithms), boolInt(p.AgentForwarding), p.JumpProfileID, string(tunnelsJSON))
 	return err
 }
 
@@ -337,14 +387,46 @@ func (s *Store) GetSSHProfile(id string) (SSHProfile, error) {
 
 // --- RDP profiles ---
 
-const rdpColumns = `id, name, host, port, username, domain, password, width, height, fullscreen, folder_id, sort_order`
+const rdpColumns = `id, name, host, port, username, domain, password, width, height, fullscreen, folder_id, sort_order, options`
+
+func rdpSecretKey(id string) string { return "rdp:" + id }
 
 func scanRDP(row interface{ Scan(...any) error }) (rdp.RDPProfile, error) {
 	var p rdp.RDPProfile
 	var fullscreen int
-	err := row.Scan(&p.ID, &p.Name, &p.Host, &p.Port, &p.Username, &p.Domain, &p.Password, &p.Width, &p.Height, &fullscreen, &p.FolderID, &p.SortOrder)
+	var options string
+	err := row.Scan(&p.ID, &p.Name, &p.Host, &p.Port, &p.Username, &p.Domain, &p.Password, &p.Width, &p.Height, &fullscreen, &p.FolderID, &p.SortOrder, &options)
 	p.Fullscreen = fullscreen == 1
+	p.Options = rdp.DefaultOptions()
+	if options != "" {
+		if json.Unmarshal([]byte(options), &p.Options) != nil {
+			p.Options = rdp.DefaultOptions()
+		}
+	}
+	if p.Options.DrivePaths == nil {
+		p.Options.DrivePaths = []string{}
+	}
 	return p, err
+}
+
+// fillRDPPassword blanks the password (write-only for the UI) and flags
+// whether one is stored. With reveal it returns the real value instead.
+func (s *Store) fillRDPPassword(p *rdp.RDPProfile, reveal bool) {
+	dbPassword := p.Password
+	p.Password = ""
+	stored := ""
+	if s.secrets != nil {
+		if v, err := s.secrets.Get(rdpSecretKey(p.ID)); err == nil {
+			stored = v
+		}
+	}
+	if stored == "" {
+		stored = dbPassword
+	}
+	p.HasPassword = stored != ""
+	if reveal {
+		p.Password = stored
+	}
 }
 
 func (s *Store) ListRDPProfiles() ([]rdp.RDPProfile, error) {
@@ -361,7 +443,13 @@ func (s *Store) ListRDPProfiles() ([]rdp.RDPProfile, error) {
 		}
 		profiles = append(profiles, p)
 	}
-	return profiles, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for i := range profiles {
+		s.fillRDPPassword(&profiles[i], false)
+	}
+	return profiles, nil
 }
 
 func (s *Store) SaveRDPProfile(p rdp.RDPProfile) error {
@@ -370,32 +458,62 @@ func (s *Store) SaveRDPProfile(p rdp.RDPProfile) error {
 		fullscreen = 1
 	}
 	var sortOrder int
-	err := s.db.QueryRow(`SELECT sort_order FROM rdp_profiles WHERE id = ?`, p.ID).Scan(&sortOrder)
+	var oldPassword string
+	err := s.db.QueryRow(`SELECT sort_order, password FROM rdp_profiles WHERE id = ?`, p.ID).Scan(&sortOrder, &oldPassword)
 	if errors.Is(err, sql.ErrNoRows) {
 		sortOrder = s.nextHostOrder(p.FolderID)
 	} else if err != nil {
 		return err
 	}
+
+	// A new password goes to the keychain; the DB column is only a fallback.
+	dbPassword := oldPassword
+	switch {
+	case p.Password != "":
+		dbPassword = ""
+		if s.secrets == nil || s.secrets.Set(rdpSecretKey(p.ID), p.Password) != nil {
+			dbPassword = p.Password
+		}
+	case p.ClearPassword:
+		dbPassword = ""
+		if s.secrets != nil {
+			_ = s.secrets.Delete(rdpSecretKey(p.ID))
+		}
+	}
+
+	if p.Options.DrivePaths == nil {
+		p.Options.DrivePaths = []string{}
+	}
+	opts, err := json.Marshal(p.Options)
+	if err != nil {
+		return err
+	}
 	_, err = s.db.Exec(`
 INSERT INTO rdp_profiles (`+rdpColumns+`)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
     name=excluded.name, host=excluded.host, port=excluded.port, username=excluded.username,
-    domain=excluded.domain, width=excluded.width, height=excluded.height,
-    fullscreen=excluded.fullscreen, folder_id=excluded.folder_id
-`, p.ID, p.Name, p.Host, p.Port, p.Username, p.Domain, p.Password, p.Width, p.Height, fullscreen, p.FolderID, sortOrder)
+    domain=excluded.domain, password=excluded.password, width=excluded.width, height=excluded.height,
+    fullscreen=excluded.fullscreen, folder_id=excluded.folder_id, options=excluded.options
+`, p.ID, p.Name, p.Host, p.Port, p.Username, p.Domain, dbPassword, p.Width, p.Height, fullscreen, p.FolderID, sortOrder, string(opts))
 	return err
 }
 
 func (s *Store) DeleteRDPProfile(id string) error {
+	if s.secrets != nil {
+		_ = s.secrets.Delete(rdpSecretKey(id))
+	}
 	_, err := s.db.Exec(`DELETE FROM rdp_profiles WHERE id = ?`, id)
 	return err
 }
 
+// GetRDPProfile returns the profile with its real password filled in, for
+// launching. Never hand the result to the UI.
 func (s *Store) GetRDPProfile(id string) (rdp.RDPProfile, error) {
 	p, err := scanRDP(s.db.QueryRow(`SELECT `+rdpColumns+` FROM rdp_profiles WHERE id = ?`, id))
 	if err != nil {
 		return p, fmt.Errorf("get rdp profile: %w", err)
 	}
+	s.fillRDPPassword(&p, true)
 	return p, nil
 }

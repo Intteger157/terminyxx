@@ -292,3 +292,28 @@ func (m *ConnectionManager) CloseAll() {
 		_ = conn.Close()
 	}
 }
+
+// StartTunnel starts a port forward on an open connection.
+func (m *ConnectionManager) StartTunnel(id string, spec TunnelSpec) (TunnelInfo, error) {
+	conn, err := m.get(id)
+	if err != nil {
+		return TunnelInfo{}, err
+	}
+	return conn.StartTunnel(spec)
+}
+
+func (m *ConnectionManager) StopTunnel(id, tunnelID string) error {
+	conn, err := m.get(id)
+	if err != nil {
+		return err
+	}
+	return conn.StopTunnel(tunnelID)
+}
+
+func (m *ConnectionManager) ListTunnels(id string) ([]TunnelInfo, error) {
+	conn, err := m.get(id)
+	if err != nil {
+		return []TunnelInfo{}, nil
+	}
+	return conn.Tunnels(), nil
+}

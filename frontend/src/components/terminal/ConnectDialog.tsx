@@ -1,7 +1,8 @@
 import { useRef, useState } from 'react';
 import { ChevronRight, Folder, FolderOpen, KeyRound, Layers, Lock, ShieldAlert } from 'lucide-react';
 import { Select } from '../ui/Select';
-import type { SSHProfile } from '../../types';
+import type { SavedTunnel, SSHProfile } from '../../types';
+import { JumpHostSelect, TunnelEditor } from './TunnelEditor';
 import { Modal, useDialogs } from '../ui/Dialogs';
 import { confirmAgentForwarding } from '../security/securityPrompts';
 import { useSettings } from '../../lib/settings';
@@ -32,6 +33,9 @@ export function ConnectDialog({ initial, folders, onClose, onConnect }: ConnectD
   const [allowLegacy, setAllowLegacy] = useState(!!initial?.allowLegacyAlgorithms);
   const [agentForwarding, setAgentForwarding] = useState(!!initial?.agentForwarding);
   const [advanced, setAdvanced] = useState(allowLegacy || agentForwarding);
+  const [jumpProfileId, setJumpProfileId] = useState(initial?.jumpProfileId ?? '');
+  const [tunnels, setTunnels] = useState<SavedTunnel[]>(initial?.tunnels ?? []);
+  const [network, setNetwork] = useState(!!initial?.jumpProfileId || (initial?.tunnels?.length ?? 0) > 0);
   const dialogs = useDialogs();
   const sshSec = useSettings().security.ssh;
 
@@ -58,6 +62,8 @@ export function ConnectDialog({ initial, folders, onClose, onConnect }: ConnectD
         folderId,
         allowLegacyAlgorithms: allowLegacy,
         agentForwarding,
+        jumpProfileId,
+        tunnels: tunnels.filter((t) => t.kind === 'dynamic' || (t.destHost.trim() && t.destPort > 0)).map((t) => ({ ...t, destHost: t.destHost.trim(), bindHost: t.bindHost.trim() })),
   });
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -212,6 +218,31 @@ export function ConnectDialog({ initial, folders, onClose, onConnect }: ConnectD
                     ? 'The server can use your local SSH keys while you are connected.'
                     : 'Agent forwarding is turned off in Settings → Security, so this has no effect until you allow it there.'}
                 </p>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div>
+          <button
+            type="button"
+            className="flex items-center gap-1 text-[12px] text-gray-500 hover:text-gray-300 transition-colors"
+            onClick={() => setNetwork((v) => !v)}
+            aria-expanded={network}
+          >
+            <ChevronRight size={13} className={`transition-transform ${network ? 'rotate-90' : ''}`} />
+            Jump host and tunnels
+            {(jumpProfileId || tunnels.length > 0) && <span className="ml-1 text-2xs text-accent">{[jumpProfileId && 'jump', tunnels.length > 0 && `${tunnels.length} tunnel${tunnels.length > 1 ? 's' : ''}`].filter(Boolean).join(', ')}</span>}
+          </button>
+          {network && (
+            <div className="mt-3 space-y-3 pl-4 animate-fade-in">
+              <Field label="Connect through" hint="Reach this host via another saved host (like ssh -J).">
+                <JumpHostSelect value={jumpProfileId} selfId={initial?.id} onChange={setJumpProfileId} />
+              </Field>
+              <div>
+                <span className="label">Port forwarding</span>
+                <TunnelEditor tunnels={tunnels} onChange={setTunnels} />
+                <p className="mt-1.5 text-2xs text-gray-600">Tunnels marked “Start with host” open when you connect. Others can be started from the status bar.</p>
               </div>
             </div>
           )}

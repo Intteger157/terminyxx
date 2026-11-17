@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Columns2, EyeOff, FolderPlus, FolderTree, Loader2, Lock, Monitor, PanelLeft, Plus, RotateCw, Rows2, Server, Settings, ShieldCheck, SquareArrowOutUpRight, SquareTerminal, Unplug, Upload, X } from 'lucide-react';
+import { Columns2, Copy, EyeOff, ScrollText, FolderPlus, FolderTree, Loader2, Lock, Monitor, PanelLeft, Plus, RotateCw, Rows2, Server, Settings, ShieldCheck, SquareArrowOutUpRight, SquareTerminal, Unplug, Upload, X } from 'lucide-react';
 import { Sidebar, MAX_WIDTH, MIN_WIDTH } from './components/sidebar/Sidebar';
 import { ImportDialog } from './components/sidebar/ImportDialog';
 import { useHostLibrary } from './components/sidebar/useHostLibrary';
@@ -16,6 +16,8 @@ import { useContextMenu } from './components/ui/ContextMenu';
 import type { MenuEntry } from './components/ui/ContextMenu';
 import { contains, insertPane, neighbor, paneIds, removePane, setSizes as setSplitSizes } from './lib/layout';
 import type { Side, TabGroup } from './lib/layout';
+import { setBroadcastPanes, toggleBroadcast, useBroadcast } from './lib/broadcast';
+import { SnippetsDialog } from './components/snippets/SnippetsDialog';
 import type { PaneDrag } from './lib/paneDrag';
 import { ConnectDialog } from './components/terminal/ConnectDialog';
 import { SftpPanel } from './components/sftp/SftpPanel';
@@ -67,6 +69,8 @@ function App() {
   const [connectDialog, setConnectDialog] = useState<ConnectDialogState>(null);
   const [rdpDialog, setRdpDialog] = useState<{ key: number; initial?: Partial<RDPProfile> } | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [snippetsOpen, setSnippetsOpen] = useState(false);
+  const broadcast = useBroadcast();
   const [settingsOpen, setSettingsOpen] = useState<SettingsSection | null>(null);
   const [sidebar, setSidebar] = useState<SidebarPref>(readSidebarPref);
   const library = useHostLibrary({
@@ -132,6 +136,10 @@ function App() {
   const activeTab = tabs.find((t) => t.id === activeTabId) ?? null;
   const activeGroup = groups.find((g) => activeTabId && contains(g.root, activeTabId)) ?? null;
   const isSplit = !!activeGroup && activeGroup.root.kind === 'split';
+  const groupPanes = useMemo(() => (activeGroup ? paneIds(activeGroup.root) : []), [activeGroup]);
+  useEffect(() => {
+    setBroadcastPanes(groupPanes);
+  }, [groupPanes]);
 
   // Remember the focused pane per tab, so switching tabs restores it.
   useEffect(() => {
@@ -463,6 +471,8 @@ function App() {
     'Ctrl+Shift+E': () => splitPane(activeTabId, 'bottom'),
     'Ctrl+Shift+L': () => void lockApp(),
     'Ctrl+Shift+M': toggleMasking,
+    'Ctrl+Shift+S': () => setSnippetsOpen((v) => !v),
+    'Ctrl+Shift+G': toggleBroadcast,
     // Move focus between panes (only while split, so the shell keeps Alt+arrows otherwise).
     ...(isSplit
       ? {
@@ -510,6 +520,10 @@ function App() {
     { id: 'lock', group: 'Actions', label: 'Lock Terminyxx', icon: <Lock size={14} />, keywords: 'lock away privacy master password', shortcut: [mod, '⇧', 'L'], run: () => void lockApp() },
     { id: 'mask', group: 'Actions', label: masking ? 'Stop masking secrets' : 'Mask secrets in terminal output', icon: <EyeOff size={14} />, keywords: 'presentation streamer mode hide password token redact', shortcut: [mod, '⇧', 'M'], run: toggleMasking },
     { id: 'trusted', group: 'Actions', label: 'Trusted hosts (known_hosts)', icon: <ShieldCheck size={14} />, keywords: 'host key fingerprint known_hosts revoke', run: () => setSettingsOpen('security') },
+    { id: 'snippets', group: 'Actions', label: 'Snippets', icon: <ScrollText size={14} />, keywords: 'commands macros saved scripts run', shortcut: [mod, '⇧', 'S'], run: () => setSnippetsOpen(true) },
+    ...(isSplit
+      ? [{ id: 'broadcast', group: 'Actions', label: broadcast.enabled ? 'Stop typing in all panes' : 'Type in all panes', icon: <Copy size={14} />, keywords: 'broadcast multi input sync panes', shortcut: [mod, '⇧', 'G'], run: toggleBroadcast } as PaletteItem]
+      : []),
     { id: 'sidebar', group: 'Actions', label: sidebar.rail ? 'Expand sidebar' : 'Collapse sidebar', icon: <PanelLeft size={14} />, shortcut: [mod, '⇧', 'B'], run: toggleRail },
     ...(activeTab?.status === 'connected'
       ? [
@@ -649,6 +663,9 @@ function App() {
         onToggleMasking={toggleMasking}
         lockConfigured={lock.configured}
         onLock={() => void lockApp()}
+        onOpenSnippets={() => setSnippetsOpen(true)}
+        broadcast={broadcast}
+        onToggleBroadcast={toggleBroadcast}
       />
 
       {paletteOpen && (
@@ -662,6 +679,15 @@ function App() {
           folders={library.folderChoices}
           onClose={() => setConnectDialog(null)}
           onConnect={handleDialogConnect}
+        />
+      )}
+
+      {snippetsOpen && (
+        <SnippetsDialog
+          paneId={activeTab?.status === 'connected' ? activeTab.id : null}
+          builtins={{ host: activeTab?.profile?.host ?? '', user: activeTab?.profile?.username ?? '' }}
+          broadcasting={broadcast.enabled}
+          onClose={() => setSnippetsOpen(false)}
         />
       )}
 

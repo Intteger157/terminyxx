@@ -35,6 +35,8 @@ export namespace connection {
 	    profileId: string;
 	    allowLegacyAlgorithms: boolean;
 	    agentForwarding: boolean;
+	    jump: ConnectRequest[];
+	    jumpFor: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new ConnectRequest(source);
@@ -55,7 +57,27 @@ export namespace connection {
 	        this.profileId = source["profileId"];
 	        this.allowLegacyAlgorithms = source["allowLegacyAlgorithms"];
 	        this.agentForwarding = source["agentForwarding"];
+	        this.jump = this.convertValues(source["jump"], ConnectRequest);
+	        this.jumpFor = source["jumpFor"];
 	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class FileEntry {
 	    name: string;
@@ -123,6 +145,56 @@ export namespace connection {
 	        this.fingerprint = source["fingerprint"];
 	        this.marker = source["marker"];
 	        this.source = source["source"];
+	    }
+	}
+	export class TunnelInfo {
+	    id: string;
+	    kind: string;
+	    bindHost: string;
+	    bindPort: number;
+	    destHost: string;
+	    destPort: number;
+	    listenAddr: string;
+	    active: number;
+	    total: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new TunnelInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.kind = source["kind"];
+	        this.bindHost = source["bindHost"];
+	        this.bindPort = source["bindPort"];
+	        this.destHost = source["destHost"];
+	        this.destPort = source["destPort"];
+	        this.listenAddr = source["listenAddr"];
+	        this.active = source["active"];
+	        this.total = source["total"];
+	    }
+	}
+	export class TunnelSpec {
+	    id: string;
+	    kind: string;
+	    bindHost: string;
+	    bindPort: number;
+	    destHost: string;
+	    destPort: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new TunnelSpec(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.kind = source["kind"];
+	        this.bindHost = source["bindHost"];
+	        this.bindPort = source["bindPort"];
+	        this.destHost = source["destHost"];
+	        this.destPort = source["destPort"];
 	    }
 	}
 
@@ -231,6 +303,48 @@ export namespace importers {
 
 export namespace rdp {
 	
+	export class Options {
+	    clipboard: boolean;
+	    printers: boolean;
+	    drives: boolean;
+	    allDrives: boolean;
+	    smartCards: boolean;
+	    comPorts: boolean;
+	    usb: boolean;
+	    audio: string;
+	    microphone: boolean;
+	    camera: boolean;
+	    multiMon: boolean;
+	    dynamicRes: boolean;
+	    smartSizing: boolean;
+	    admin: boolean;
+	    gateway: string;
+	    drivePaths: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new Options(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.clipboard = source["clipboard"];
+	        this.printers = source["printers"];
+	        this.drives = source["drives"];
+	        this.allDrives = source["allDrives"];
+	        this.smartCards = source["smartCards"];
+	        this.comPorts = source["comPorts"];
+	        this.usb = source["usb"];
+	        this.audio = source["audio"];
+	        this.microphone = source["microphone"];
+	        this.camera = source["camera"];
+	        this.multiMon = source["multiMon"];
+	        this.dynamicRes = source["dynamicRes"];
+	        this.smartSizing = source["smartSizing"];
+	        this.admin = source["admin"];
+	        this.gateway = source["gateway"];
+	        this.drivePaths = source["drivePaths"];
+	    }
+	}
 	export class RDPProfile {
 	    id: string;
 	    name: string;
@@ -239,11 +353,14 @@ export namespace rdp {
 	    username: string;
 	    domain: string;
 	    password: string;
+	    hasPassword: boolean;
+	    clearPassword: boolean;
 	    width: number;
 	    height: number;
 	    fullscreen: boolean;
 	    folderId: string;
 	    sortOrder: number;
+	    options: Options;
 	
 	    static createFrom(source: any = {}) {
 	        return new RDPProfile(source);
@@ -258,12 +375,33 @@ export namespace rdp {
 	        this.username = source["username"];
 	        this.domain = source["domain"];
 	        this.password = source["password"];
+	        this.hasPassword = source["hasPassword"];
+	        this.clearPassword = source["clearPassword"];
 	        this.width = source["width"];
 	        this.height = source["height"];
 	        this.fullscreen = source["fullscreen"];
 	        this.folderId = source["folderId"];
 	        this.sortOrder = source["sortOrder"];
+	        this.options = this.convertValues(source["options"], Options);
 	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 
 }
@@ -327,6 +465,30 @@ export namespace store {
 	        this.sortOrder = source["sortOrder"];
 	    }
 	}
+	export class Tunnel {
+	    id: string;
+	    kind: string;
+	    bindHost: string;
+	    bindPort: number;
+	    destHost: string;
+	    destPort: number;
+	    autoStart: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new Tunnel(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.kind = source["kind"];
+	        this.bindHost = source["bindHost"];
+	        this.bindPort = source["bindPort"];
+	        this.destHost = source["destHost"];
+	        this.destPort = source["destPort"];
+	        this.autoStart = source["autoStart"];
+	    }
+	}
 	export class SSHProfile {
 	    id: string;
 	    name: string;
@@ -342,6 +504,8 @@ export namespace store {
 	    sortOrder: number;
 	    allowLegacyAlgorithms: boolean;
 	    agentForwarding: boolean;
+	    jumpProfileId: string;
+	    tunnels: Tunnel[];
 	
 	    static createFrom(source: any = {}) {
 	        return new SSHProfile(source);
@@ -363,6 +527,50 @@ export namespace store {
 	        this.sortOrder = source["sortOrder"];
 	        this.allowLegacyAlgorithms = source["allowLegacyAlgorithms"];
 	        this.agentForwarding = source["agentForwarding"];
+	        this.jumpProfileId = source["jumpProfileId"];
+	        this.tunnels = this.convertValues(source["tunnels"], Tunnel);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class Snippet {
+	    id: string;
+	    name: string;
+	    command: string;
+	    description: string;
+	    group: string;
+	    execute: boolean;
+	    sortOrder: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new Snippet(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.command = source["command"];
+	        this.description = source["description"];
+	        this.group = source["group"];
+	        this.execute = source["execute"];
+	        this.sortOrder = source["sortOrder"];
 	    }
 	}
 

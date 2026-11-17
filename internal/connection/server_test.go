@@ -97,13 +97,22 @@ func newTestServer(t *testing.T, opts serverOpts) *testServer {
 }
 
 func serveConn(nc net.Conn, cfg *ssh.ServerConfig, fs sftp.Handlers) {
-	_, chans, reqs, err := ssh.NewServerConn(nc, cfg)
+	sconn, chans, reqs, err := ssh.NewServerConn(nc, cfg)
 	if err != nil {
 		nc.Close()
 		return
 	}
-	go ssh.DiscardRequests(reqs)
+	sc := &serverConnForwards{conn: sconn}
+	go func() {
+		for req := range reqs {
+			sc.handleGlobal(req)
+		}
+	}()
 	for nch := range chans {
+		if nch.ChannelType() == "direct-tcpip" {
+			go handleDirectTCPIP(nch)
+			continue
+		}
 		if nch.ChannelType() != "session" {
 			nch.Reject(ssh.UnknownChannelType, "")
 			continue
@@ -238,4 +247,90 @@ func (r *recorder) reset() {
 	r.mu.Lock()
 	r.events = nil
 	r.mu.Unlock()
+}
+
+// handleDirectTCPIP serves `ssh -L` / SOCKS channels by dialing the target.
+func handleDirectTCPIP(nch ssh.NewChannel) {
+	var p struct {
+		Host     string
+		Port     uint32
+		OrigHost string
+		OrigPort uint32
+	}
+	if err := ssh.Unmarshal(nch.ExtraData(), &p); err != nil {
+		nch.Reject(ssh.ConnectionFailed, "bad payload")
+		return
+	}
+	dst, err := net.Dial("tcp", net.JoinHostPort(p.Host, strconv.Itoa(int(p.Port))))
+	if err != nil {
+		nch.Reject(ssh.ConnectionFailed, err.Error())
+		return
+	}
+	ch, reqs, err := nch.Accept()
+	if err != nil {
+		dst.Close()
+		return
+	}
+	go ssh.DiscardRequests(reqs)
+	go func() { io.Copy(dst, ch); dst.Close() }()
+	go func() { io.Copy(ch, dst); ch.Close() }()
+}
+
+// serverConnForwards implements `tcpip-forward` for one server connection.
+type serverConnForwards struct {
+	conn      *ssh.ServerConn
+	mu        sync.Mutex
+	listeners []net.Listener
+}
+
+func (s *serverConnForwards) handleGlobal(req *ssh.Request) {
+	if req.Type != "tcpip-forward" {
+		req.Reply(false, nil)
+		return
+	}
+	var p struct {
+		Host string
+		Port uint32
+	}
+	if ssh.Unmarshal(req.Payload, &p) != nil {
+		req.Reply(false, nil)
+		return
+	}
+	ln, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(int(p.Port))))
+	if err != nil {
+		req.Reply(false, nil)
+		return
+	}
+	s.mu.Lock()
+	s.listeners = append(s.listeners, ln)
+	s.mu.Unlock()
+	_, portStr, _ := net.SplitHostPort(ln.Addr().String())
+	bound, _ := strconv.Atoi(portStr)
+	req.Reply(true, ssh.Marshal(struct{ Port uint32 }{uint32(bound)}))
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go s.forward(c, p.Host, uint32(bound))
+		}
+	}()
+}
+
+func (s *serverConnForwards) forward(c net.Conn, host string, port uint32) {
+	payload := ssh.Marshal(struct {
+		Host     string
+		Port     uint32
+		OrigHost string
+		OrigPort uint32
+	}{host, port, "127.0.0.1", 1})
+	ch, reqs, err := s.conn.OpenChannel("forwarded-tcpip", payload)
+	if err != nil {
+		c.Close()
+		return
+	}
+	go ssh.DiscardRequests(reqs)
+	go func() { io.Copy(ch, c); ch.Close() }()
+	go func() { io.Copy(c, ch); c.Close() }()
 }

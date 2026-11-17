@@ -272,3 +272,71 @@ func TestSettings(t *testing.T) {
 		t.Fatalf("setting = %q", v)
 	}
 }
+
+func TestRDPOptionsAndPassword(t *testing.T) {
+	sec := NewMemorySecrets()
+	s, err := Open(filepath.Join(t.TempDir(), "t.db"), sec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	opts := rdp.DefaultOptions()
+	opts.Printers = true
+	opts.DrivePaths = []string{"/a"}
+	must(t, s.SaveRDPProfile(rdp.RDPProfile{ID: "x", Name: "x", Host: "h", Password: "pw", Options: opts}))
+	l, _ := s.ListRDPProfiles()
+	if len(l) != 1 || l[0].Password != "" || !l[0].HasPassword || !l[0].Options.Printers || len(l[0].Options.DrivePaths) != 1 {
+		t.Fatalf("list: %+v", l)
+	}
+	// Saving with an empty password keeps the stored one.
+	must(t, s.SaveRDPProfile(rdp.RDPProfile{ID: "x", Name: "x", Host: "h", Options: opts}))
+	g, _ := s.GetRDPProfile("x")
+	if g.Password != "pw" {
+		t.Fatalf("password lost: %+v", g)
+	}
+	must(t, s.SaveRDPProfile(rdp.RDPProfile{ID: "x", Name: "x", Host: "h", ClearPassword: true, Options: opts}))
+	if g, _ = s.GetRDPProfile("x"); g.Password != "" || g.HasPassword {
+		t.Fatalf("password not cleared: %+v", g)
+	}
+}
+
+func TestSSHJumpAndTunnelsRoundTrip(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "t.db"), NewMemorySecrets())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	must(t, s.SaveSSHProfile(SSHProfile{ID: "a", Name: "a", Host: "h", Username: "u", JumpProfileID: "a",
+		Tunnels: []Tunnel{{ID: "t1", Kind: "local", BindPort: 8080, DestHost: "db", DestPort: 5432, AutoStart: true}}}))
+	p, err := s.GetSSHProfile("a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.JumpProfileID != "" {
+		t.Error("a host must not jump through itself")
+	}
+	if len(p.Tunnels) != 1 || !p.Tunnels[0].AutoStart || p.Tunnels[0].DestPort != 5432 {
+		t.Fatalf("tunnels: %+v", p.Tunnels)
+	}
+}
+
+func TestSnippets(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "t.db"), NewMemorySecrets())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	must(t, s.SaveSnippet(Snippet{ID: "1", Name: "Disk", Command: "df -h {{path:/}}", Group: "Ops", Execute: true}))
+	if s.SaveSnippet(Snippet{ID: "2", Name: "", Command: "x"}) == nil {
+		t.Error("empty name must be rejected")
+	}
+	must(t, s.SaveSnippet(Snippet{ID: "1", Name: "Disk usage", Command: "df -h", Group: "Ops"}))
+	l, _ := s.ListSnippets()
+	if len(l) != 1 || l[0].Name != "Disk usage" || l[0].Execute {
+		t.Fatalf("%+v", l)
+	}
+	must(t, s.DeleteSnippet("1"))
+	if l, _ = s.ListSnippets(); len(l) != 0 {
+		t.Fatal("not deleted")
+	}
+}

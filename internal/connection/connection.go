@@ -36,9 +36,46 @@ type ManagedConnection struct {
 	mask func() MaskOptions
 	// agentConn serves forwarded agent requests; nil without forwarding.
 	agentConn io.Closer
+
+	tunnelSet *tunnelSet
+	// jumps are the intermediate SSH clients of a ProxyJump chain, closed
+	// together with the connection.
+	jumps []*ssh.Client
 }
 
-func dialSSH(req ConnectRequest, hostKeys *HostKeyStore, policy Policy) (*ssh.Client, error) {
+// dialSSH connects to req, going through req.Jump (ProxyJump) first. It
+// returns the final client plus the intermediate clients, which must stay
+// open for as long as the final one is used.
+func dialSSH(req ConnectRequest, hostKeys *HostKeyStore, policy Policy) (*ssh.Client, []*ssh.Client, error) {
+	var jumps []*ssh.Client
+	var via *ssh.Client
+	closeJumps := func() {
+		for i := len(jumps) - 1; i >= 0; i-- {
+			_ = jumps[i].Close()
+		}
+	}
+	for _, hop := range req.Jump {
+		hop.Jump = nil
+		// A host key the user confirmed applies to whichever hop presents it.
+		hop.AcceptHostKey, hop.ReplaceHostKey = req.AcceptHostKey, req.ReplaceHostKey
+		c, err := dialHop(hop, via, hostKeys, policy)
+		if err != nil {
+			closeJumps()
+			return nil, nil, err
+		}
+		jumps = append(jumps, c)
+		via = c
+	}
+	client, err := dialHop(req, via, hostKeys, policy)
+	if err != nil {
+		closeJumps()
+		return nil, nil, err
+	}
+	return client, jumps, nil
+}
+
+// dialHop connects to one host, directly or through the via client.
+func dialHop(req ConnectRequest, via *ssh.Client, hostKeys *HostKeyStore, policy Policy) (*ssh.Client, error) {
 	port := req.Port
 	if port == 0 {
 		port = 22
@@ -72,7 +109,12 @@ func dialSSH(req ConnectRequest, hostKeys *HostKeyStore, policy Policy) (*ssh.Cl
 		legacyAlgorithms(config)
 	}
 
-	client, err := ssh.Dial("tcp", addr, config)
+	var client *ssh.Client
+	if via == nil {
+		client, err = ssh.Dial("tcp", addr, config)
+	} else {
+		client, err = dialThrough(via, addr, config)
+	}
 	if err != nil {
 		var hk *HostKeyError
 		if errors.As(err, &hk) {
@@ -86,19 +128,36 @@ func dialSSH(req ConnectRequest, hostKeys *HostKeyStore, policy Policy) (*ssh.Cl
 	return client, nil
 }
 
+// dialThrough opens an SSH session to addr over a channel of the via client.
+func dialThrough(via *ssh.Client, addr string, config *ssh.ClientConfig) (*ssh.Client, error) {
+	conn, err := via.Dial("tcp", addr)
+	if err != nil {
+		return nil, fmt.Errorf("jump host cannot reach %s: %w", addr, err)
+	}
+	_ = conn.SetDeadline(time.Now().Add(dialTimeout))
+	ncc, chans, reqs, err := ssh.NewClientConn(conn, addr, config)
+	if err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	_ = conn.SetDeadline(time.Time{})
+	return ssh.NewClient(ncc, chans, reqs), nil
+}
+
 // LegacyAlgorithmsPrefix marks a handshake that failed because the server
 // only offers algorithms the "modern algorithms only" setting disables.
 const LegacyAlgorithmsPrefix = "LEGACY_ALGORITHMS_REQUIRED"
 
 func newManagedConnection(req ConnectRequest, m *ConnectionManager) (*ManagedConnection, error) {
 	policy := m.Policy()
-	client, err := dialSSH(req, m.hostKeys, policy)
+	client, jumps, err := dialSSH(req, m.hostKeys, policy)
 	if err != nil {
 		return nil, err
 	}
 	c := &ManagedConnection{
 		ID:      req.ID,
 		client:  client,
+		jumps:   jumps,
 		state:   StateConnected,
 		emitter: m.emitter,
 		stop:    make(chan struct{}),
@@ -229,6 +288,7 @@ func (c *ManagedConnection) SFTP() (*SFTPBridge, error) {
 
 func (c *ManagedConnection) Close() error {
 	c.once.Do(func() { close(c.stop) })
+	c.closeTunnels()
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -248,6 +308,10 @@ func (c *ManagedConnection) Close() error {
 	if c.client != nil {
 		err := c.client.Close()
 		c.client = nil
+		for i := len(c.jumps) - 1; i >= 0; i-- {
+			_ = c.jumps[i].Close()
+		}
+		c.jumps = nil
 		return err
 	}
 	return nil

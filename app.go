@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -114,7 +116,107 @@ func (a *App) SSHConnect(req connection.ConnectRequest) error {
 			req.Password = pw
 		}
 	}
-	return a.connMgr.Connect(req)
+	if req.JumpFor != "" && a.data != nil && len(req.Jump) == 0 {
+		jump, err := a.resolveJumpChain(req.JumpFor)
+		if err != nil {
+			return err
+		}
+		req.Jump = jump
+	}
+	if err := a.connMgr.Connect(req); err != nil {
+		return err
+	}
+	a.autoStartTunnels(req)
+	return nil
+}
+
+// resolveJumpChain follows the saved profile's JumpProfileID links and
+// returns the hops in connection order (outermost jump host first).
+func (a *App) resolveJumpChain(profileID string) ([]connection.ConnectRequest, error) {
+	var chain []connection.ConnectRequest
+	seen := map[string]bool{profileID: true}
+	cur, err := a.data.GetSSHProfile(profileID)
+	if err != nil {
+		return nil, nil // unsaved or missing profile: no jump
+	}
+	for cur.JumpProfileID != "" {
+		if seen[cur.JumpProfileID] {
+			return nil, errors.New("jump host loop: a host cannot be reached through itself")
+		}
+		if len(chain) >= 5 {
+			return nil, errors.New("too many jump hosts (max 5)")
+		}
+		seen[cur.JumpProfileID] = true
+		hop, err := a.data.GetSSHProfile(cur.JumpProfileID)
+		if err != nil {
+			return nil, fmt.Errorf("jump host not found: %w", err)
+		}
+		pw, _ := a.data.SSHPassword(hop.ID)
+		chain = append([]connection.ConnectRequest{{
+			Host: hop.Host, Port: hop.Port, Username: hop.Username, AuthType: hop.AuthType,
+			Password: pw, KeyPath: hop.KeyPath, ProfileID: hop.ID,
+			AllowLegacyAlgorithms: hop.AllowLegacyAlgorithms,
+		}}, chain...)
+		cur = hop
+	}
+	return chain, nil
+}
+
+// autoStartTunnels starts the saved forwards marked "start with host".
+func (a *App) autoStartTunnels(req connection.ConnectRequest) {
+	if req.JumpFor == "" || a.data == nil {
+		return
+	}
+	p, err := a.data.GetSSHProfile(req.JumpFor)
+	if err != nil {
+		return
+	}
+	for _, t := range p.Tunnels {
+		if !t.AutoStart {
+			continue
+		}
+		spec := connection.TunnelSpec{ID: t.ID, Kind: t.Kind, BindHost: t.BindHost, BindPort: t.BindPort, DestHost: t.DestHost, DestPort: t.DestPort}
+		if _, err := a.connMgr.StartTunnel(req.ID, spec); err != nil {
+			log.Printf("tunnel %s: %v", t.ID, err)
+		}
+	}
+}
+
+// Snippet bindings
+
+func (a *App) ListSnippets() ([]store.Snippet, error) {
+	if a.data == nil {
+		return []store.Snippet{}, nil
+	}
+	return a.data.ListSnippets()
+}
+
+func (a *App) SaveSnippet(sn store.Snippet) error {
+	if a.data == nil {
+		return nil
+	}
+	return a.data.SaveSnippet(sn)
+}
+
+func (a *App) DeleteSnippet(id string) error {
+	if a.data == nil {
+		return nil
+	}
+	return a.data.DeleteSnippet(id)
+}
+
+// Tunnel bindings
+
+func (a *App) StartTunnel(id string, spec connection.TunnelSpec) (connection.TunnelInfo, error) {
+	return a.connMgr.StartTunnel(id, spec)
+}
+
+func (a *App) StopTunnel(id, tunnelID string) error {
+	return a.connMgr.StopTunnel(id, tunnelID)
+}
+
+func (a *App) ListTunnels(id string) ([]connection.TunnelInfo, error) {
+	return a.connMgr.ListTunnels(id)
 }
 
 func (a *App) SSHDisconnect(id string) error {
@@ -254,7 +356,13 @@ func (a *App) LaunchRDP(profileID string) error {
 	if err != nil {
 		return err
 	}
-	return a.rdp.Launch(profile)
+	return a.rdp.Launch(profile, profile.Password)
+}
+
+// SelectFolder opens a native folder picker (used to pick folders to share
+// over RDP). It returns "" if the user cancels.
+func (a *App) SelectFolder() (string, error) {
+	return runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{Title: "Select a folder to share"})
 }
 
 // SelectKeyFile opens a native file picker for a private key.
