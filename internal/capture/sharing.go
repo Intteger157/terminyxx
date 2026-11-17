@@ -1,7 +1,7 @@
 package capture
 
 import (
-	"path/filepath"
+	"path"
 	"sort"
 	"strings"
 )
@@ -60,7 +60,7 @@ func activeCaptures(usages []captureUsage, running map[string]bool) []string {
 			continue
 		}
 		if u.nonPackaged {
-			exe := strings.ToLower(filepath.Base(strings.ReplaceAll(u.name, "#", `\`)))
+			exe := strings.ToLower(path.Base(strings.ReplaceAll(u.name, "#", "/")))
 			if !running[exe] {
 				continue
 			}

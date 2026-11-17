@@ -223,6 +223,10 @@ func keyPath(p string) string {
 		"_CurrentDrive_", currentDrive(),
 	)
 	p = repl.Replace(p)
+	if filepath.Separator != '\\' {
+		// Sessions exported on Windows use backslashes.
+		p = strings.ReplaceAll(p, `\`, "/")
+	}
 	if strings.HasSuffix(strings.ToLower(p), ".pub") {
 		if priv := p[:len(p)-4]; fileExists(priv) || !fileExists(p) {
 			p = priv
