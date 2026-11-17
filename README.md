@@ -59,7 +59,8 @@ Grab the latest build from the [Releases page](https://github.com/Intteger157/te
 | --- | --- |
 | Windows x64 | `Terminyxx-<version>-windows-x64-setup.exe` or `-portable.exe` |
 | Windows ARM64 | `Terminyxx-<version>-windows-arm64-setup.exe` or `-portable.exe` |
-| macOS (Intel and Apple Silicon) | universal build |
+| macOS Intel (12 Monterey or newer) | `Terminyxx-<version>-macos-x64.dmg` or `.zip` |
+| macOS Apple Silicon (12 Monterey or newer) | `Terminyxx-<version>-macos-arm64.dmg` or `.zip` |
 
 Every release includes `SHA256SUMS.txt` for verification.
 
@@ -122,7 +123,7 @@ Bump `info.productVersion` in `wails.json`, then push a tag:
 git tag v0.2.0 && git push origin v0.2.0
 ```
 
-The release workflow builds Windows (x64, ARM64) and macOS (universal), packages the installer with
+The release workflow builds Windows and macOS (each x64 and ARM64), packages the installer with
 Inno Setup and publishes everything with checksums. A tag with a suffix (`v0.2.0-rc1`) becomes a prerelease.
 
 ## Roadmap
