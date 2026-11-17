@@ -39,7 +39,7 @@ small, and needs no Electron or bundled browser.
 ### Host library
 - Folders, colors, drag-and-drop ordering; SSH and RDP hosts side by side
 - Passwords are stored in the **OS keychain** (Windows Credential Manager / macOS Keychain), never in the database
-- **Import** from OpenSSH config, MobaXterm, PuTTY, KiTTY, WinSCP, SecureCRT, Tabby, FileZilla and `.rdp` files
+- **Import** from OpenSSH config, MobaXterm, PuTTY, KiTTY, WinSCP, SecureCRT, Tabby, Termius (CSV), FileZilla and `.rdp` files
 
 ### RDP
 - One-click launch through the native client (`mstsc` on Windows, the system RDP client on macOS)

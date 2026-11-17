@@ -45,7 +45,7 @@ func TestListAndUnknown(t *testing.T) {
 		}
 		seen[s.ID] = true
 	}
-	for _, id := range []string{"openssh", "mobaxterm", "putty", "winscp", "securecrt", "tabby", "filezilla", "rdpfiles"} {
+	for _, id := range []string{"openssh", "mobaxterm", "putty", "winscp", "securecrt", "tabby", "termius", "filezilla", "rdpfiles"} {
 		if !seen[id] {
 			t.Errorf("source %s not listed", id)
 		}
@@ -259,5 +259,33 @@ func TestRDPFiles(t *testing.T) {
 	}
 	if by["lab"].Port != 3389 || by["lab"].User != "bob" || len(res.Hosts) != 2 {
 		t.Fatalf("rdp lab = %+v", res.Hosts)
+	}
+}
+
+func TestTermiusCSV(t *testing.T) {
+	dir := t.TempDir()
+	csv := "Groups,Label,Tags,Hostname/IP,Protocol,Port,Username,Password,SSH Key\r\n" +
+		"Prod/Web,web-01,,10.0.0.5,ssh,2222,deploy,secret,~/.ssh/id_ed25519\r\n" +
+		",db,,db.example.com,ssh,,root,,mykey\r\n" +
+		",tel,,10.0.0.9,telnet,23,,,\r\n"
+	p := writeFile(t, dir, "termius.csv", append([]byte{0xEF, 0xBB, 0xBF}, csv...))
+	res, err := Read("termius", []string{p})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Hosts) != 2 || res.Skipped["telnet"] != 1 {
+		t.Fatalf("%+v", res)
+	}
+	m := byName(res.Hosts)
+	w := m["web-01"]
+	if w.Host != "10.0.0.5" || w.Port != 2222 || w.User != "deploy" || strings.Join(w.Folder, "/") != "Prod/Web" || w.KeyFile == "" {
+		t.Errorf("web-01: %+v", w)
+	}
+	if d := m["db"]; d.Port != 22 || d.KeyFile != "" || d.Warning == "" {
+		t.Errorf("db: %+v", d)
+	}
+	bad := writeFile(t, dir, "bad.csv", []byte("a,b\n1,2\n"))
+	if _, err := Read("termius", []string{bad}); err == nil {
+		t.Error("CSV without a host column should error")
 	}
 }
