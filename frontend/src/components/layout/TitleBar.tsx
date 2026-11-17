@@ -94,8 +94,10 @@ export function TitleBar({
 
   return (
     <header
-      className="drag flex items-center h-10 flex-shrink-0 bg-app select-none"
-      style={{ paddingLeft: mac ? 80 : 8 }}
+      className={`drag flex items-center flex-shrink-0 bg-app select-none ${mac ? 'h-[52px]' : 'h-10'}`}
+      // macOS: the inset traffic lights sit ~26px from the top and end at ~88px,
+      // so the bar is taller (their centre line = ours) and the content starts clear of them.
+      style={{ paddingLeft: mac ? 96 : 8 }}
       onDoubleClick={(e) => {
         if (e.target === e.currentTarget) WindowToggleMaximise();
       }}

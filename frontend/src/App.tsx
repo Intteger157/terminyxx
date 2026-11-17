@@ -502,7 +502,7 @@ function App() {
     { id: 'new', group: 'Actions', label: 'New SSH connection', icon: <Plus size={14} />, shortcut: [mod, '⇧', 'T'], run: () => openConnectDialog(null) },
     { id: 'rdp', group: 'Actions', label: 'New RDP profile', icon: <Monitor size={14} />, run: () => openRdpDialog() },
     { id: 'folder', group: 'Actions', label: 'New folder', icon: <FolderPlus size={14} />, run: () => library.newFolder('') },
-    { id: 'import', group: 'Actions', label: 'Import hosts from another app', icon: <Upload size={14} />, keywords: 'openssh ssh config mobaxterm putty kitty winscp securecrt tabby filezilla rdp migrate', run: () => library.setImportOpen(true) },
+    { id: 'import', group: 'Actions', label: 'Import hosts from another app', icon: <Upload size={14} />, keywords: 'openssh ssh config mobaxterm putty kitty winscp securecrt tabby termius filezilla rdp migrate', run: () => library.setImportOpen(true) },
     { id: 'settings', group: 'Actions', label: 'Settings', icon: <Settings size={14} />, keywords: 'preferences options config', shortcut: [mod, ','], run: () => setSettingsOpen('appearance') },
     { id: 'theme', group: 'Actions', label: 'Change terminal theme', icon: <Settings size={14} />, keywords: 'color scheme appearance font', run: () => setSettingsOpen('appearance') },
     { id: 'highlight', group: 'Actions', label: 'Highlighting rules', icon: <Settings size={14} />, keywords: 'keyword syntax highlight color error warning', run: () => setSettingsOpen('highlight') },

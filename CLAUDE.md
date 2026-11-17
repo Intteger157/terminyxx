@@ -52,7 +52,7 @@ xterm.js        ◀──Wails events (stream)───  PTY / SFTP goroutines (
     - If the keychain is unavailable, the DB column is the fallback. Startup moves legacy plaintext passwords into the keychain.
   - **Folders**: a `folders` table (`parent_id`, `color`, `sort_order`) plus `folder_id` and `sort_order` on `ssh_profiles` and `rdp_profiles`. `MoveItem(kind, id, parentId, index)` renumbers siblings. Folders and hosts are ordered separately, SSH and RDP hosts share one order, and moves that would create a folder cycle are rejected. `DeleteFolder` moves the folder's contents up a level.
 - **`internal/importers`**: the "Import from another app" backend. Each source is one file that calls `register(source{...})` in `init()`:
-  - Sources: OpenSSH config, MobaXterm, PuTTY, KiTTY, WinSCP, SecureCRT, Tabby, FileZilla, `.rdp` files.
+  - Sources: OpenSSH config, MobaXterm, PuTTY, KiTTY, WinSCP, SecureCRT, Tabby, Termius (CSV), FileZilla, `.rdp` files.
   - Each source has `detect()`, which finds its data on this machine (a file path, or `"Registry: HKCU\…"` for registry-based clients), and `read(paths)`. `Pick` (`file` | `files` | `folder`) controls which dialog `PickImportPaths` opens, so exports copied from another OS work too (e.g. a PuTTY `.reg` export on macOS).
   - Everything is mapped to the common `Host` type, and unsupported session types (Telnet, FTP, …) are counted in `Skipped`.
   - `readText` handles UTF-8/UTF-16 BOMs (regedit and mstsc write UTF-16) and falls back to the ANSI code page. Registry access is in `platform_windows.go`, with a stub elsewhere.
