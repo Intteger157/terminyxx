@@ -19,11 +19,11 @@ import (
 // into folders the user picked with RDPPickSaveFolder.
 
 func (a *App) filesReady() error {
+	if err := a.guard(); err != nil {
+		return err
+	}
 	if a.files == nil {
 		return errors.New("not ready")
-	}
-	if a.sec.lock != nil && a.sec.lock.Locked() {
-		return connection.ErrLocked
 	}
 	return nil
 }
@@ -64,6 +64,9 @@ func (a *App) RDPFileCreate(dir, relPath string) (string, error) {
 
 // RDPFileWrite appends a base64-encoded chunk.
 func (a *App) RDPFileWrite(handle, chunk string) error {
+	if err := a.guard(); err != nil {
+		return err
+	}
 	if a.files == nil {
 		return errors.New("not ready")
 	}
@@ -112,6 +115,11 @@ func (a *App) RDPPrintFinish(handle string, commit bool) (string, error) {
 	if a.files == nil {
 		return "", errors.New("not ready")
 	}
+	if commit && a.guard() != nil {
+		// Locked: never open or print the document; drop it.
+		_, _ = a.files.Close(handle, false)
+		return "", connection.ErrLocked
+	}
 	path, err := a.files.Close(handle, commit)
 	if err != nil || !commit {
 		return "", err
@@ -124,6 +132,9 @@ func (a *App) RDPPrintFinish(handle string, commit bool) (string, error) {
 
 // OpenPrintsFolder shows the folder with documents printed on remote desktops.
 func (a *App) OpenPrintsFolder() error {
+	if err := a.guard(); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(a.printsDir, 0o700); err != nil {
 		return err
 	}

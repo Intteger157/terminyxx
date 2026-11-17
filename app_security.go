@@ -145,6 +145,52 @@ func (a *App) watchLockTriggers() {
 	}
 }
 
+// guard refuses a call while the app is locked. Every exported App method
+// (the ones the webview can call) starts with it, except those in
+// openWhileLocked; TestLockedBindings enforces that, so a new binding can't
+// be forgotten.
+func (a *App) guard() error {
+	if a.sec.lock != nil && a.sec.lock.Locked() {
+		return connection.ErrLocked
+	}
+	return nil
+}
+
+// openWhileLocked lists the bindings that work on the lock screen: unlocking
+// itself, reading the settings the lock screen needs (theme), and calls that
+// only close, cancel or resize something that already exists. None of them
+// reads or changes hosts, files, passwords or security settings.
+var openWhileLocked = map[string]string{
+	"GetLockStatus":        "lock screen",
+	"LockApp":              "lock screen",
+	"UnlockApp":            "lock screen",
+	"UnlockWithBiometrics": "lock screen",
+	"GetBiometrics":        "lock screen",
+	"TestBiometrics":       "only shows the OS prompt",
+	"SetMasterPassword":    "requires the current master password",
+	"VerifyMasterPassword": "throttled password check",
+	"GetSettings":          "the lock screen is themed before unlocking",
+	"AppVersion":           "static",
+	"CheckForUpdate":       "no local data",
+	"SetCaptureProtection": "applied at startup",
+	"GetScreenSharing":     "no local data",
+	"ClipboardWrite":       "write only, auto-clear",
+	"SSHDisconnect":        "closes a session",
+	"SSHStartShell":        "output is held back by the gate",
+	"SSHResizePTY":         "resize only",
+	"StopTunnel":           "closes a forward",
+	"StopRecording":        "stops a recording",
+	"IsRecording":          "a flag",
+	"SFTPCancelTransfer":   "cancels a job",
+	"SFTPCancelDragOut":    "cancels a job",
+	"RDPClose":             "closes a session",
+	"RDPLastError":         "error text of this tab",
+	"RDPFileClose":         "finishes or deletes a file already started",
+	"RDPPrintFinish":       "refuses to open or print while locked, but discards",
+	"LocalParentDir":       "string manipulation",
+	"ListImportSources":    "static list",
+}
+
 // Lock bindings
 
 // GetLockStatus reports whether a master password is set and the app is locked.
@@ -233,9 +279,15 @@ func (a *App) ClipboardWrite(text string, sensitive bool) (int, error) {
 // Trusted host (known_hosts) bindings
 
 func (a *App) ListTrustedHosts() ([]connection.TrustedHost, error) {
+	if err := a.guard(); err != nil {
+		return nil, err
+	}
 	return a.connMgr.TrustedHosts()
 }
 
 func (a *App) RemoveTrustedHost(id string) error {
+	if err := a.guard(); err != nil {
+		return err
+	}
 	return a.connMgr.RemoveTrustedHost(id)
 }

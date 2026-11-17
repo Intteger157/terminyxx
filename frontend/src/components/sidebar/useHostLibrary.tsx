@@ -21,6 +21,7 @@ import type { DragItem, FolderNode, HostItem } from './tree';
 import { FOLDER_COLORS, buildTree, folderOptions, hostItems, hostsUnder } from './tree';
 import { rdpForSave, sshForSave } from '../../lib/profiles';
 import { copyText } from '../../lib/clipboard';
+import { useAppLock } from '../../lib/appLock';
 import {
   DeleteFolder,
   DeleteRDPProfile,
@@ -65,9 +66,12 @@ export function useHostLibrary(opts: Options) {
     }
   }, [dialogs]);
 
+  // The backend refuses to list hosts while the app is locked, so load them
+  // once it is open (at startup with a master password, and after each unlock).
+  const { locked, ready } = useAppLock();
   useEffect(() => {
-    reload();
-  }, [reload]);
+    if (ready && !locked) reload();
+  }, [reload, locked, ready]);
 
   const tree = useMemo(() => buildTree(folders, hostItems(ssh, rdp)), [folders, ssh, rdp]);
   const folderChoices = useMemo(() => folderOptions(tree), [tree]);

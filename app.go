@@ -246,18 +246,27 @@ func (a *App) StreamConnect(req connection.StreamRequest) error {
 
 // SerialPorts lists the serial devices on this machine.
 func (a *App) SerialPorts() ([]string, error) {
+	if err := a.guard(); err != nil {
+		return nil, err
+	}
 	return a.connMgr.SerialPorts()
 }
 
 // ListContainers lists running Docker/Podman containers or Kubernetes pods
 // on the server of an SSH connection.
 func (a *App) ListContainers(id, runtime string) ([]connection.Container, error) {
+	if err := a.guard(); err != nil {
+		return nil, err
+	}
 	return a.connMgr.ListContainers(id, runtime)
 }
 
 // HostStats reads CPU, memory, disk, load and network of a Linux server
 // over a separate SSH exec channel.
 func (a *App) HostStats(id string) (connection.HostStats, error) {
+	if err := a.guard(); err != nil {
+		return connection.HostStats{}, err
+	}
 	return a.connMgr.HostStats(id)
 }
 
@@ -304,6 +313,9 @@ func (a *App) SearchRecordings(query string) ([]recording.Hit, error) {
 
 // OpenRecordingsFolder shows the recordings in the file manager.
 func (a *App) OpenRecordingsFolder() error {
+	if err := a.guard(); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(a.recordingsDir, 0o700); err != nil {
 		return err
 	}
@@ -317,11 +329,11 @@ func (a *App) OpenRecordingsFolder() error {
 // file chosen by the user (e.g. inside a cloud-synced folder). It returns the
 // path, or "" if the user cancelled.
 func (a *App) ExportSync(passphrase string, includePasswords bool) (string, error) {
+	if err := a.guard(); err != nil {
+		return "", err
+	}
 	if a.data == nil {
 		return "", errors.New("storage is unavailable")
-	}
-	if a.sec.lock != nil && a.sec.lock.Locked() {
-		return "", connection.ErrLocked
 	}
 	if len(passphrase) < 8 {
 		return "", errors.New("passphrase must be at least 8 characters")
@@ -356,11 +368,11 @@ func (a *App) ExportSync(passphrase string, includePasswords bool) (string, erro
 // are replaced; nothing is deleted.
 func (a *App) ImportSync(passphrase string) (store.ImportResult, error) {
 	var res store.ImportResult
+	if err := a.guard(); err != nil {
+		return res, err
+	}
 	if a.data == nil {
 		return res, errors.New("storage is unavailable")
-	}
-	if a.sec.lock != nil && a.sec.lock.Locked() {
-		return res, connection.ErrLocked
 	}
 	path, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
 		Title:   "Open encrypted sync file",
@@ -387,6 +399,9 @@ func (a *App) ImportSync(passphrase string) (store.ImportResult, error) {
 // Snippet bindings
 
 func (a *App) ListSnippets() ([]store.Snippet, error) {
+	if err := a.guard(); err != nil {
+		return nil, err
+	}
 	if a.data == nil {
 		return []store.Snippet{}, nil
 	}
@@ -394,6 +409,9 @@ func (a *App) ListSnippets() ([]store.Snippet, error) {
 }
 
 func (a *App) SaveSnippet(sn store.Snippet) error {
+	if err := a.guard(); err != nil {
+		return err
+	}
 	if a.data == nil {
 		return nil
 	}
@@ -401,6 +419,9 @@ func (a *App) SaveSnippet(sn store.Snippet) error {
 }
 
 func (a *App) DeleteSnippet(id string) error {
+	if err := a.guard(); err != nil {
+		return err
+	}
 	if a.data == nil {
 		return nil
 	}
@@ -410,6 +431,9 @@ func (a *App) DeleteSnippet(id string) error {
 // Tunnel bindings
 
 func (a *App) StartTunnel(id string, spec connection.TunnelSpec) (connection.TunnelInfo, error) {
+	if err := a.guard(); err != nil {
+		return connection.TunnelInfo{}, err
+	}
 	return a.connMgr.StartTunnel(id, spec)
 }
 
@@ -418,6 +442,9 @@ func (a *App) StopTunnel(id, tunnelID string) error {
 }
 
 func (a *App) ListTunnels(id string) ([]connection.TunnelInfo, error) {
+	if err := a.guard(); err != nil {
+		return nil, err
+	}
 	return a.connMgr.ListTunnels(id)
 }
 
@@ -432,6 +459,9 @@ func (a *App) SSHStartShell(id string, cols, rows int) error {
 }
 
 func (a *App) SSHWriteInput(id, data string) error {
+	if err := a.guard(); err != nil {
+		return err
+	}
 	return a.connMgr.WriteInput(id, data)
 }
 
@@ -442,26 +472,44 @@ func (a *App) SSHResizePTY(id string, cols, rows int) error {
 // SFTP bindings
 
 func (a *App) SFTPListDir(id, path string) ([]connection.FileEntry, error) {
+	if err := a.guard(); err != nil {
+		return nil, err
+	}
 	return a.connMgr.ListDir(id, path)
 }
 
 func (a *App) SFTPMkdir(id, path string) error {
+	if err := a.guard(); err != nil {
+		return err
+	}
 	return a.connMgr.Mkdir(id, path)
 }
 
 func (a *App) SFTPRemove(id, path string) error {
+	if err := a.guard(); err != nil {
+		return err
+	}
 	return a.connMgr.Remove(id, path)
 }
 
 func (a *App) SFTPRename(id, oldPath, newPath string) error {
+	if err := a.guard(); err != nil {
+		return err
+	}
 	return a.connMgr.Rename(id, oldPath, newPath)
 }
 
 func (a *App) SFTPReadFile(id, path string) (string, error) {
+	if err := a.guard(); err != nil {
+		return "", err
+	}
 	return a.connMgr.ReadRemoteFile(id, path)
 }
 
 func (a *App) SFTPTransfer(id string, req connection.TransferRequest) error {
+	if err := a.guard(); err != nil {
+		return err
+	}
 	return a.connMgr.Transfer(id, req)
 }
 
@@ -470,16 +518,25 @@ func (a *App) SFTPCancelTransfer(jobID string) {
 }
 
 func (a *App) GetRemoteHome(id string) (string, error) {
+	if err := a.guard(); err != nil {
+		return "", err
+	}
 	return a.connMgr.GetRemoteHome(id)
 }
 
 // Local filesystem bindings
 
 func (a *App) GetLocalHome() (string, error) {
+	if err := a.guard(); err != nil {
+		return "", err
+	}
 	return a.connMgr.GetLocalHome()
 }
 
 func (a *App) ListLocalDir(path string) ([]connection.FileEntry, error) {
+	if err := a.guard(); err != nil {
+		return nil, err
+	}
 	return connection.ListLocalDir(path)
 }
 
@@ -488,14 +545,23 @@ func (a *App) LocalParentDir(path string) string {
 }
 
 func (a *App) ReadLocalFile(path string) (string, error) {
+	if err := a.guard(); err != nil {
+		return "", err
+	}
 	return connection.ReadLocalFile(path)
 }
 
 func (a *App) LocalMkdir(path string) error {
+	if err := a.guard(); err != nil {
+		return err
+	}
 	return connection.LocalMkdir(path)
 }
 
 func (a *App) LocalRemove(path string) error {
+	if err := a.guard(); err != nil {
+		return err
+	}
 	if path == "" {
 		return errors.New("empty path")
 	}
@@ -503,12 +569,18 @@ func (a *App) LocalRemove(path string) error {
 }
 
 func (a *App) LocalRename(oldPath, newPath string) error {
+	if err := a.guard(); err != nil {
+		return err
+	}
 	return connection.LocalRename(oldPath, newPath)
 }
 
 // Profile store bindings
 
 func (a *App) ListSSHProfiles() ([]store.SSHProfile, error) {
+	if err := a.guard(); err != nil {
+		return nil, err
+	}
 	if a.data == nil {
 		return []store.SSHProfile{}, nil
 	}
@@ -516,6 +588,9 @@ func (a *App) ListSSHProfiles() ([]store.SSHProfile, error) {
 }
 
 func (a *App) SaveSSHProfile(profile store.SSHProfile) error {
+	if err := a.guard(); err != nil {
+		return err
+	}
 	if a.data == nil {
 		return nil
 	}
@@ -523,6 +598,9 @@ func (a *App) SaveSSHProfile(profile store.SSHProfile) error {
 }
 
 func (a *App) DeleteSSHProfile(id string) error {
+	if err := a.guard(); err != nil {
+		return err
+	}
 	if a.data == nil {
 		return nil
 	}
@@ -530,6 +608,9 @@ func (a *App) DeleteSSHProfile(id string) error {
 }
 
 func (a *App) ListRDPProfiles() ([]rdp.RDPProfile, error) {
+	if err := a.guard(); err != nil {
+		return nil, err
+	}
 	if a.data == nil {
 		return []rdp.RDPProfile{}, nil
 	}
@@ -537,6 +618,9 @@ func (a *App) ListRDPProfiles() ([]rdp.RDPProfile, error) {
 }
 
 func (a *App) SaveRDPProfile(profile rdp.RDPProfile) error {
+	if err := a.guard(); err != nil {
+		return err
+	}
 	if a.data == nil {
 		return nil
 	}
@@ -544,6 +628,9 @@ func (a *App) SaveRDPProfile(profile rdp.RDPProfile) error {
 }
 
 func (a *App) DeleteRDPProfile(id string) error {
+	if err := a.guard(); err != nil {
+		return err
+	}
 	if a.data == nil {
 		return nil
 	}
@@ -551,6 +638,9 @@ func (a *App) DeleteRDPProfile(id string) error {
 }
 
 func (a *App) LaunchRDP(profileID string) error {
+	if err := a.guard(); err != nil {
+		return err
+	}
 	if a.data == nil {
 		return nil
 	}
@@ -564,11 +654,17 @@ func (a *App) LaunchRDP(profileID string) error {
 // SelectFolder opens a native folder picker (used to pick folders to share
 // over RDP). It returns "" if the user cancels.
 func (a *App) SelectFolder() (string, error) {
+	if err := a.guard(); err != nil {
+		return "", err
+	}
 	return runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{Title: "Select a folder to share"})
 }
 
 // SelectKeyFile opens a native file picker for a private key.
 func (a *App) SelectKeyFile() (string, error) {
+	if err := a.guard(); err != nil {
+		return "", err
+	}
 	dir := ""
 	if home, err := os.UserHomeDir(); err == nil {
 		dir = filepath.Join(home, ".ssh")
@@ -595,6 +691,9 @@ func (a *App) GetSettings() (string, error) {
 // SaveSettings stores the settings JSON written by the frontend and applies
 // its security part (masking, algorithms, agent forwarding, clipboard…).
 func (a *App) SaveSettings(value string) error {
+	if err := a.guard(); err != nil {
+		return err
+	}
 	a.applySecurity(security.FromSettingsJSON(value))
 	if a.data == nil {
 		return nil
@@ -615,6 +714,9 @@ func (a *App) GetScreenSharing() capture.SharingState {
 }
 
 func (a *App) ListFolders() ([]store.Folder, error) {
+	if err := a.guard(); err != nil {
+		return nil, err
+	}
 	if a.data == nil {
 		return []store.Folder{}, nil
 	}
@@ -622,6 +724,9 @@ func (a *App) ListFolders() ([]store.Folder, error) {
 }
 
 func (a *App) SaveFolder(f store.Folder) error {
+	if err := a.guard(); err != nil {
+		return err
+	}
 	if a.data == nil {
 		return errors.New("storage unavailable")
 	}
@@ -629,6 +734,9 @@ func (a *App) SaveFolder(f store.Folder) error {
 }
 
 func (a *App) DeleteFolder(id string) error {
+	if err := a.guard(); err != nil {
+		return err
+	}
 	if a.data == nil {
 		return errors.New("storage unavailable")
 	}
@@ -638,6 +746,9 @@ func (a *App) DeleteFolder(id string) error {
 // MoveItem moves a folder, SSH or RDP host (kind "folder" | "ssh" | "rdp")
 // into parentID at index among its siblings; index -1 appends.
 func (a *App) MoveItem(kind, id, parentID string, index int) error {
+	if err := a.guard(); err != nil {
+		return err
+	}
 	if a.data == nil {
 		return errors.New("storage unavailable")
 	}
@@ -654,12 +765,18 @@ func (a *App) ListImportSources() []importers.SourceInfo {
 
 // ReadImport reads hosts from a source; empty paths means its detected data.
 func (a *App) ReadImport(sourceID string, paths []string) (importers.Result, error) {
+	if err := a.guard(); err != nil {
+		return importers.Result{}, err
+	}
 	return importers.Read(sourceID, paths)
 }
 
 // PickImportPaths shows the file/folder dialog a source needs. It returns
 // nothing if the user cancels.
 func (a *App) PickImportPaths(sourceID string) ([]string, error) {
+	if err := a.guard(); err != nil {
+		return nil, err
+	}
 	var info *importers.SourceInfo
 	for _, s := range importers.List() {
 		if s.ID == sourceID {

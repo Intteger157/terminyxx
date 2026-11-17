@@ -7,7 +7,6 @@ import (
 	"net"
 	"strconv"
 
-	"terminyxx/internal/connection"
 	"terminyxx/internal/rdpgw"
 )
 
@@ -37,11 +36,11 @@ type RDPSession struct {
 // one (empty = use the keychain). The returned password exists only because
 // CredSSP runs in the webview.
 func (a *App) RDPOpen(tabID, profileID, password, acceptFingerprint string) (RDPSession, error) {
+	if err := a.guard(); err != nil {
+		return RDPSession{}, err
+	}
 	if a.data == nil || a.rdpgw == nil {
 		return RDPSession{}, errors.New("storage is unavailable")
-	}
-	if a.sec.lock != nil && a.sec.lock.Locked() {
-		return RDPSession{}, connection.ErrLocked
 	}
 	p, err := a.data.GetRDPProfile(profileID)
 	if err != nil {
