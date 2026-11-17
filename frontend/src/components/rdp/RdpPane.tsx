@@ -45,7 +45,8 @@ async function describe(err: unknown, tabId: string, signingIn: boolean): Promis
   const first = err.backtrace().split('\n')[0];
   // With NLA, Windows answers wrong credentials by dropping the connection
   // (its log says ERROR_LOGON_FAILURE) instead of sending an error code.
-  if (signingIn && !gateway && /WebSocket\s+Closed/i.test(first)) {
+  // Depending on timing the client sees the close or a truncated frame.
+  if (signingIn && !gateway && /WebSocket\s+Closed|not enough bytes/i.test(first)) {
     return { text: 'The server closed the connection during sign-in, usually because of a wrong user name or password', auth: true };
   }
   return { text: gateway || first || 'Connection failed', auth: false };

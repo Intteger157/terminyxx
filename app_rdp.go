@@ -50,7 +50,7 @@ func (a *App) RDPOpen(tabID, profileID, password, acceptFingerprint string) (RDP
 	defer cancel()
 	chain, err := rdpgw.Probe(ctx, p.Host, port)
 	if err != nil {
-		return RDPSession{}, fmt.Errorf("could not reach %s: %w", p.Host, err)
+		return RDPSession{}, localNetworkHint(fmt.Errorf("could not reach %s: %w", p.Host, err))
 	}
 	dest := net.JoinHostPort(p.Host, strconv.Itoa(port))
 	if err := a.rdpgw.Trust().Check(dest, p.Host, chain); err != nil {
