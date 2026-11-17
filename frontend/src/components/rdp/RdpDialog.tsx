@@ -96,7 +96,11 @@ export function RdpDialog({ initial, onClose, onSave, onSwitchToSsh }: RdpDialog
         </div>
         <Field
           label="Password"
-          hint={isMac ? 'Microsoft Remote Desktop cannot receive a saved password; you will be asked to enter it.' : 'Stored in the OS keychain and handed to the Windows credential store when you connect.'}
+          hint={
+            isMac
+              ? 'Stored in the Keychain and used by the built-in client. Windows App (system client) asks for it itself.'
+              : 'Stored in the OS keychain. Used by the built-in client and handed to Remote Desktop Connection when you open the system client.'
+          }
         >
           <input
             className="input-field"
