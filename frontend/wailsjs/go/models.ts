@@ -725,6 +725,7 @@ export namespace store {
 	    agentForwarding: boolean;
 	    jumpProfileId: string;
 	    tunnels: Tunnel[];
+	    sftpOnly: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new SSHProfile(source);
@@ -748,6 +749,7 @@ export namespace store {
 	        this.agentForwarding = source["agentForwarding"];
 	        this.jumpProfileId = source["jumpProfileId"];
 	        this.tunnels = this.convertValues(source["tunnels"], Tunnel);
+	        this.sftpOnly = source["sftpOnly"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

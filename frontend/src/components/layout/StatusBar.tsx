@@ -40,6 +40,7 @@ export function StatusBar({ tab, size, sftpOpen, openTabs, onToggleSftp, onDisco
   const protection = useCaptureProtection();
   const update = useUpdates().result;
   const status = tab?.status;
+  const sftpOnly = !!tab?.profile?.sftpOnly;
   const dot =
     status === 'connected'
       ? 'bg-emerald-400 shadow-[0_0_6px_rgb(52_211_153/0.8)]'
@@ -141,22 +142,22 @@ export function StatusBar({ tab, size, sftpOpen, openTabs, onToggleSftp, onDisco
         </button>
       )}
 
-      {status === 'connected' && size && (
+      {status === 'connected' && size && !sftpOnly && (
         <span className="font-mono tabular-nums">
           {size.cols}×{size.rows}
         </span>
       )}
-      {tab && <span>UTF-8</span>}
-      {tab && <span>xterm-256color</span>}
-      {tab && status === 'connected' && tab.profile && <HostMonitor tab={tab} />}
-      {tab && status === 'connected' && tab.profile && (
+      {tab && !sftpOnly && <span>UTF-8</span>}
+      {tab && !sftpOnly && <span>xterm-256color</span>}
+      {tab && status === 'connected' && tab.profile && !sftpOnly && <HostMonitor tab={tab} />}
+      {tab && status === 'connected' && tab.profile && !sftpOnly && (
         <button className="flex items-center h-5 px-1.5 rounded-md transition-colors hover:bg-white/[0.06] hover:text-gray-300 flex-shrink-0" onClick={onOpenContainers} title="Containers: Docker, Podman, Kubernetes">
           <Box size={11} />
         </button>
       )}
-      {tab && status === 'connected' && <RecordButton tab={tab} onOpenLibrary={onOpenRecordings} />}
+      {tab && status === 'connected' && !sftpOnly && <RecordButton tab={tab} onOpenLibrary={onOpenRecordings} />}
       {tab && status === 'connected' && tab.profile && <TunnelsPopover tab={tab} />}
-      {status === 'connected' && !tab?.stream && (
+      {status === 'connected' && !tab?.stream && !sftpOnly && (
         <button
           className={`flex items-center gap-1 h-5 px-2 rounded-md transition-colors ${
             sftpOpen ? 'bg-accent/15 text-accent' : 'hover:bg-white/[0.06] hover:text-gray-300'

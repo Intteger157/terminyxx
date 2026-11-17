@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { ProtoBadge } from './ProtoBadge';
 import { Folder as FolderIcon, FolderPlus, Monitor, PanelLeftOpen, Plus, Search, X } from 'lucide-react';
 import type { Folder, RDPProfile, SSHProfile } from '../../types';
 import { Avatar } from '../ui/Avatar';
@@ -266,7 +267,10 @@ function SearchResults({
           >
             <Avatar label={h.name} colorKey={h.id} live={connected.has(h.id)} icon={h.kind === 'rdp' ? <Monitor size={12} /> : undefined} size={26} />
             <span className="min-w-0 flex-1">
-              <span className="block text-[12.5px] font-medium text-gray-200 truncate">{h.name}</span>
+              <span className="flex items-center gap-1.5 min-w-0">
+                <span className="text-[12.5px] font-medium text-gray-200 truncate">{h.name}</span>
+                <ProtoBadge host={h} />
+              </span>
               <span className="block text-2xs text-gray-500 truncate">
                 {path.length > 0 && <span className="text-gray-600">{path.join(' / ')} · </span>}
                 {h.detail}

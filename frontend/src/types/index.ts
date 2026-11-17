@@ -29,6 +29,8 @@ export interface SSHProfile {
   /** Saved host to connect through (ProxyJump). */
   jumpProfileId?: string;
   tunnels?: SavedTunnel[];
+  /** The server offers SFTP but no shell: open the file manager, no terminal. */
+  sftpOnly?: boolean;
 }
 
 export type TunnelKind = 'local' | 'remote' | 'dynamic';
