@@ -2,10 +2,11 @@ import { useEffect, useRef } from 'react';
 import type { IronError, UserInteraction } from '@devolutions/iron-remote-desktop';
 import { RDPClose, RDPLastError } from '../../../wailsjs/go/main/App';
 import type { main } from '../../../wailsjs/go/models';
+import { RdpAudioPlayer } from '../../lib/rdpAudio';
 
 type RdpModule = typeof import('@devolutions/iron-remote-desktop-rdp');
 
-// The engine (IronRDP compiled to WebAssembly, ~6 MB) loads on first use.
+// The engine (IronRDP compiled to WebAssembly, ~5 MB) loads on first use.
 let engine: Promise<RdpModule> | null = null;
 function loadEngine(): Promise<RdpModule> {
   engine ??= (async () => {
@@ -55,6 +56,17 @@ async function describe(err: unknown, tabId: string, signingIn: boolean): Promis
 const even = (n: number) => Math.max(200, Math.floor(n / 2) * 2);
 
 /**
+ * Retina and other high-density screens: the desktop is requested in device
+ * pixels and Windows is asked to scale its UI by the same factor (as Windows
+ * App does), so text is sharp instead of an upscaled low-resolution picture.
+ */
+function displayScale(): { ratio: number; percent: number } {
+  const dpr = Math.min(Math.max(window.devicePixelRatio || 1, 1), 4);
+  const ratio = Math.round(dpr * 4) / 4; // Windows' scale steps are 25%
+  return { ratio, percent: Math.round(ratio * 100) };
+}
+
+/**
  * One built-in RDP session. `session` is single-use (its token expires once
  * the gateway accepts it), so a reconnect passes a new one and this pane
  * starts over.
@@ -89,6 +101,9 @@ export function RdpPane({
     let started = false;
     let connected = false;
     const container = host.current!;
+    const audio = (session.audio || 'local') === 'local' ? new RdpAudioPlayer() : null;
+    const resumeAudio = () => audio?.resume();
+    container.addEventListener('pointerdown', resumeAudio);
     // The ticket is single-use: start on the next tick so a StrictMode
     // mount/unmount/mount (dev) doesn't spend it on a throwaway mount.
     const timer = window.setTimeout(() => {
@@ -116,9 +131,11 @@ export function RdpPane({
         u.setEnableClipboard(session.clipboard);
 
         const rect = container.getBoundingClientRect();
-        const width = dynamicResolution || !session.width ? even(rect.width) : session.width;
-        const height = dynamicResolution || !session.height ? even(rect.height) : session.height;
-        const config = u
+        const fitPane = dynamicResolution || !session.width || !session.height;
+        const { ratio, percent } = displayScale();
+        const width = fitPane ? even(rect.width * ratio) : session.width;
+        const height = fitPane ? even(rect.height * ratio) : session.height;
+        const builder = u
           .configBuilder()
           .withUsername(session.username)
           .withPassword(session.password)
@@ -127,8 +144,10 @@ export function RdpPane({
           .withProxyAddress(session.proxyUrl)
           .withAuthToken(session.token)
           .withDesktopSize({ width, height })
-          .withExtension(rdp.displayControl(true))
-          .build();
+          .withExtension(rdp.displayControl(true));
+        if (fitPane && percent > 100) builder.withExtension(rdp.desktopScaleFactor(percent));
+        if (audio) builder.withExtension(rdp.audioPlayback(audio.onMessage));
+        const config = builder.build();
 
         const info = await u.connect(config);
         connected = true;
@@ -153,6 +172,8 @@ export function RdpPane({
     return () => {
       cancelled = true;
       window.clearTimeout(timer);
+      container.removeEventListener('pointerdown', resumeAudio);
+      audio?.close();
       if (!started) return;
       live.current = false;
       try {
@@ -181,10 +202,13 @@ export function RdpPane({
       timer = window.setTimeout(() => {
         const r = container.getBoundingClientRect();
         if (!live.current || r.width < 50 || r.height < 50) return;
-        const key = `${even(r.width)}x${even(r.height)}`;
+        const { ratio, percent } = displayScale();
+        const w = even(r.width * ratio);
+        const h = even(r.height * ratio);
+        const key = `${w}x${h}@${percent}`;
         if (key === last) return;
         last = key;
-        ui.current?.resize(even(r.width), even(r.height));
+        ui.current?.resize(w, h, percent);
       }, 400);
     });
     ro.observe(container);
