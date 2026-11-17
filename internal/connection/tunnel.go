@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"strconv"
 	"sync"
@@ -48,6 +49,16 @@ type TunnelInfo struct {
 // a non-loopback address, could grow memory without limit. Connections over
 // the cap are closed right after accept.
 const maxTunnelConns = 256
+
+// isLoopbackBind reports whether host only accepts connections from this
+// computer.
+func isLoopbackBind(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
 
 type tunnel struct {
 	spec     TunnelSpec
@@ -118,6 +129,11 @@ func (c *ManagedConnection) StartTunnel(spec TunnelSpec) (TunnelInfo, error) {
 		return TunnelInfo{}, fmt.Errorf("tunnel %s is already running", spec.ID)
 	}
 
+	if spec.Kind != TunnelRemote && !isLoopbackBind(spec.BindHost) {
+		// Anyone on the network can use this forward (for a SOCKS proxy:
+		// reach anything the server can, without authentication).
+		log.Printf("tunnel %s: listening on non-loopback address %s, reachable from other computers", spec.ID, spec.BindHost)
+	}
 	bind := net.JoinHostPort(spec.BindHost, strconv.Itoa(spec.BindPort))
 	var ln net.Listener
 	var err error
