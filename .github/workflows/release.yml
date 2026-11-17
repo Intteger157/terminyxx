@@ -185,6 +185,9 @@ jobs:
     if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/release-notes
       - uses: actions/download-artifact@v4
         with:
           path: dist
@@ -234,6 +237,8 @@ jobs:
 
           EOF
           sed -i 's/^          //' notes.md
+          # Hand-written highlights for this version, if the repo has them.
+          [ -f ".github/release-notes/$GITHUB_REF_NAME.md" ] && { cat ".github/release-notes/$GITHUB_REF_NAME.md"; echo; } >> notes.md
           flags=(--title "Terminyxx $VERSION" --notes-file notes.md --generate-notes)
           [ "${{ needs.version.outputs.prerelease }}" = true ] && flags+=(--prerelease)
           gh release create "$GITHUB_REF_NAME" dist/* "${flags[@]}"
