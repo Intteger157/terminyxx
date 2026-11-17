@@ -20,6 +20,8 @@ export function DeleteRDPProfile(arg1:string):Promise<void>;
 
 export function DeleteSSHProfile(arg1:string):Promise<void>;
 
+export function DeleteSnippet(arg1:string):Promise<void>;
+
 export function GetBiometrics():Promise<security.BiometricInfo>;
 
 export function GetLocalHome():Promise<string>;
@@ -44,7 +46,11 @@ export function ListRDPProfiles():Promise<Array<rdp.RDPProfile>>;
 
 export function ListSSHProfiles():Promise<Array<store.SSHProfile>>;
 
+export function ListSnippets():Promise<Array<store.Snippet>>;
+
 export function ListTrustedHosts():Promise<Array<connection.TrustedHost>>;
+
+export function ListTunnels(arg1:string):Promise<Array<connection.TunnelInfo>>;
 
 export function LocalMkdir(arg1:string):Promise<void>;
 
@@ -98,11 +104,19 @@ export function SaveSSHProfile(arg1:store.SSHProfile):Promise<void>;
 
 export function SaveSettings(arg1:string):Promise<void>;
 
+export function SaveSnippet(arg1:store.Snippet):Promise<void>;
+
+export function SelectFolder():Promise<string>;
+
 export function SelectKeyFile():Promise<string>;
 
 export function SetCaptureProtection(arg1:boolean):Promise<void>;
 
 export function SetMasterPassword(arg1:string,arg2:string):Promise<void>;
+
+export function StartTunnel(arg1:string,arg2:connection.TunnelSpec):Promise<connection.TunnelInfo>;
+
+export function StopTunnel(arg1:string,arg2:string):Promise<void>;
 
 export function TestBiometrics():Promise<void>;
 

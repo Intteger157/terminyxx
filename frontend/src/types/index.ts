@@ -26,6 +26,21 @@ export interface SSHProfile {
   allowLegacyAlgorithms?: boolean;
   /** Forward the local ssh-agent (only if the global setting allows it). */
   agentForwarding?: boolean;
+  /** Saved host to connect through (ProxyJump). */
+  jumpProfileId?: string;
+  tunnels?: SavedTunnel[];
+}
+
+export type TunnelKind = 'local' | 'remote' | 'dynamic';
+
+export interface SavedTunnel {
+  id: string;
+  kind: TunnelKind | string;
+  bindHost: string;
+  bindPort: number;
+  destHost: string;
+  destPort: number;
+  autoStart: boolean;
 }
 
 export interface Folder {
@@ -36,6 +51,25 @@ export interface Folder {
   sortOrder: number;
 }
 
+export interface RDPOptions {
+  clipboard: boolean;
+  printers: boolean;
+  drives: boolean;
+  allDrives: boolean;
+  smartCards: boolean;
+  comPorts: boolean;
+  usb: boolean;
+  audio: string; // 'local' | 'remote' | 'off'
+  microphone: boolean;
+  camera: boolean;
+  multiMon: boolean;
+  dynamicRes: boolean;
+  smartSizing: boolean;
+  admin: boolean;
+  gateway: string;
+  drivePaths: string[];
+}
+
 export interface RDPProfile {
   id: string;
   name: string;
@@ -44,6 +78,9 @@ export interface RDPProfile {
   username: string;
   domain: string;
   password: string;
+  hasPassword?: boolean;
+  clearPassword?: boolean;
+  options?: RDPOptions;
   width: number;
   height: number;
   fullscreen: boolean;

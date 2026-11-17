@@ -26,6 +26,10 @@ export function DeleteSSHProfile(arg1) {
   return window['go']['main']['App']['DeleteSSHProfile'](arg1);
 }
 
+export function DeleteSnippet(arg1) {
+  return window['go']['main']['App']['DeleteSnippet'](arg1);
+}
+
 export function GetBiometrics() {
   return window['go']['main']['App']['GetBiometrics']();
 }
@@ -74,8 +78,16 @@ export function ListSSHProfiles() {
   return window['go']['main']['App']['ListSSHProfiles']();
 }
 
+export function ListSnippets() {
+  return window['go']['main']['App']['ListSnippets']();
+}
+
 export function ListTrustedHosts() {
   return window['go']['main']['App']['ListTrustedHosts']();
+}
+
+export function ListTunnels(arg1) {
+  return window['go']['main']['App']['ListTunnels'](arg1);
 }
 
 export function LocalMkdir(arg1) {
@@ -182,6 +194,14 @@ export function SaveSettings(arg1) {
   return window['go']['main']['App']['SaveSettings'](arg1);
 }
 
+export function SaveSnippet(arg1) {
+  return window['go']['main']['App']['SaveSnippet'](arg1);
+}
+
+export function SelectFolder() {
+  return window['go']['main']['App']['SelectFolder']();
+}
+
 export function SelectKeyFile() {
   return window['go']['main']['App']['SelectKeyFile']();
 }
@@ -192,6 +212,14 @@ export function SetCaptureProtection(arg1) {
 
 export function SetMasterPassword(arg1, arg2) {
   return window['go']['main']['App']['SetMasterPassword'](arg1, arg2);
+}
+
+export function StartTunnel(arg1, arg2) {
+  return window['go']['main']['App']['StartTunnel'](arg1, arg2);
+}
+
+export function StopTunnel(arg1, arg2) {
+  return window['go']['main']['App']['StopTunnel'](arg1, arg2);
 }
 
 export function TestBiometrics() {

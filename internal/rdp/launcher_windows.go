@@ -7,7 +7,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
+	"syscall"
+	"time"
+	"unicode/utf16"
+	"unsafe"
 )
 
 type platformLauncher struct{}
@@ -16,49 +19,74 @@ func newPlatformLauncher() Launcher {
 	return &platformLauncher{}
 }
 
-func (l *platformLauncher) Launch(profile RDPProfile) error {
-	rdpContent := buildRDPFile(profile)
-	tmpDir := os.TempDir()
-	filePath := filepath.Join(tmpDir, fmt.Sprintf("terminyxx-%s.rdp", profile.ID))
-	if err := os.WriteFile(filePath, []byte(rdpContent), 0o600); err != nil {
+func (l *platformLauncher) Launch(profile RDPProfile, password string) error {
+	if password != "" {
+		// mstsc picks up a saved TERMSRV/<host> credential automatically.
+		if err := saveCredential("TERMSRV/"+profile.Host, profile.Username, profile.Domain, password); err != nil {
+			return fmt.Errorf("save credential: %w", err)
+		}
+	}
+
+	filePath := filepath.Join(os.TempDir(), fmt.Sprintf("terminyxx-%s.rdp", profile.ID))
+	if err := os.WriteFile(filePath, []byte(buildRDPFile(profile, true)), 0o600); err != nil {
 		return fmt.Errorf("write rdp file: %w", err)
 	}
-
-	return exec.Command("mstsc.exe", filePath).Start()
+	if err := exec.Command("mstsc.exe", filePath).Start(); err != nil {
+		_ = os.Remove(filePath)
+		return err
+	}
+	// mstsc reads the file at startup; remove it shortly after.
+	time.AfterFunc(30*time.Second, func() { _ = os.Remove(filePath) })
+	return nil
 }
 
-func buildRDPFile(profile RDPProfile) string {
-	port := profile.Port
-	if port == 0 {
-		port = 3389
-	}
+var (
+	advapi32  = syscall.NewLazyDLL("advapi32.dll")
+	procWrite = advapi32.NewProc("CredWriteW")
+)
 
-	lines := []string{
-		"screen mode id:i:2",
-		fmt.Sprintf("desktopwidth:i:%d", defaultInt(profile.Width, 1920)),
-		fmt.Sprintf("desktopheight:i:%d", defaultInt(profile.Height, 1080)),
-		"session bpp:i:32",
-		fmt.Sprintf("full address:s:%s:%d", profile.Host, port),
-		fmt.Sprintf("username:s:%s", profile.Username),
-		"authentication level:i:0",
-		"prompt for credentials:i:0",
-		"negotiate security layer:i:1",
-		"redirectclipboard:i:1",
-	}
-
-	if profile.Domain != "" {
-		lines = append(lines, fmt.Sprintf("domain:s:%s", profile.Domain))
-	}
-	if profile.Fullscreen {
-		lines = append(lines, "screen mode id:i:2")
-	}
-
-	return strings.Join(lines, "\r\n") + "\r\n"
+type credential struct {
+	Flags              uint32
+	Type               uint32
+	TargetName         *uint16
+	Comment            *uint16
+	LastWritten        syscall.Filetime
+	CredentialBlobSize uint32
+	CredentialBlob     *byte
+	Persist            uint32
+	AttributeCount     uint32
+	Attributes         uintptr
+	TargetAlias        *uint16
+	UserName           *uint16
 }
 
-func defaultInt(value, fallback int) int {
-	if value == 0 {
-		return fallback
+func saveCredential(target, user, domain, password string) error {
+	if domain != "" {
+		user = domain + `\` + user
 	}
-	return value
+	tgt, err := syscall.UTF16PtrFromString(target)
+	if err != nil {
+		return err
+	}
+	usr, err := syscall.UTF16PtrFromString(user)
+	if err != nil {
+		return err
+	}
+	blob := utf16.Encode([]rune(password))
+	if len(blob) == 0 {
+		return nil
+	}
+	c := credential{
+		Type:               1, // CRED_TYPE_GENERIC
+		TargetName:         tgt,
+		CredentialBlobSize: uint32(len(blob) * 2),
+		CredentialBlob:     (*byte)(unsafe.Pointer(&blob[0])),
+		Persist:            2, // CRED_PERSIST_LOCAL_MACHINE
+		UserName:           usr,
+	}
+	r, _, callErr := procWrite.Call(uintptr(unsafe.Pointer(&c)), 0)
+	if r == 0 {
+		return callErr
+	}
+	return nil
 }

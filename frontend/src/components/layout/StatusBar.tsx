@@ -1,7 +1,8 @@
-import { ArrowUpCircle, EyeOff, FolderTree, Lock, Plug, RotateCw, ShieldAlert, ShieldCheck, Unplug } from 'lucide-react';
+import { ArrowUpCircle, Copy, EyeOff, ScrollText, FolderTree, Lock, Plug, RotateCw, ShieldAlert, ShieldCheck, Unplug } from 'lucide-react';
 import { showCaptureNotice, useCaptureProtection } from '../../lib/captureProtection';
 import { useUpdates } from '../../lib/updates';
 import type { TerminalTab } from '../../types';
+import { TunnelsPopover } from '../terminal/TunnelsPopover';
 
 interface StatusBarProps {
   tab: TerminalTab | null;
@@ -18,6 +19,10 @@ interface StatusBarProps {
   onToggleMasking: () => void;
   lockConfigured: boolean;
   onLock: () => void;
+  onOpenSnippets: () => void;
+  /** "Type in all panes" state for the visible tab. */
+  broadcast: { enabled: boolean; count: number };
+  onToggleBroadcast: () => void;
 }
 
 const LABEL: Record<TerminalTab['status'], string> = {
@@ -27,7 +32,7 @@ const LABEL: Record<TerminalTab['status'], string> = {
   disconnected: 'Disconnected',
 };
 
-export function StatusBar({ tab, size, sftpOpen, openTabs, onToggleSftp, onDisconnect, onReconnect, onOpenSecurity, onOpenUpdates, masking, onToggleMasking, lockConfigured, onLock }: StatusBarProps) {
+export function StatusBar({ tab, size, sftpOpen, openTabs, onToggleSftp, onDisconnect, onReconnect, onOpenSecurity, onOpenUpdates, masking, onToggleMasking, lockConfigured, onLock, onOpenSnippets, broadcast, onToggleBroadcast }: StatusBarProps) {
   const protection = useCaptureProtection();
   const update = useUpdates().result;
   const status = tab?.status;
@@ -109,6 +114,22 @@ export function StatusBar({ tab, size, sftpOpen, openTabs, onToggleSftp, onDisco
         <EyeOff size={11} />
         {masking && 'Masking secrets'}
       </button>
+      {broadcast.count > 1 && (
+        <button
+          className={`flex items-center gap-1 h-5 px-2 rounded-md transition-colors flex-shrink-0 ${
+            broadcast.enabled ? 'bg-amber-400/15 text-amber-300 hover:bg-amber-400/25' : 'hover:bg-white/[0.06] hover:text-gray-300'
+          }`}
+          onClick={onToggleBroadcast}
+          title={broadcast.enabled ? `Input goes to all ${broadcast.count} panes. Click to stop (Ctrl+Shift+G)` : 'Type in all panes at once (Ctrl+Shift+G)'}
+          aria-pressed={broadcast.enabled}
+        >
+          <Copy size={11} />
+          {broadcast.enabled && `Typing in ${broadcast.count} panes`}
+        </button>
+      )}
+      <button className="flex items-center h-5 px-1.5 rounded-md transition-colors hover:bg-white/[0.06] hover:text-gray-300 flex-shrink-0" onClick={onOpenSnippets} title="Snippets (Ctrl+Shift+S)">
+        <ScrollText size={11} />
+      </button>
       {lockConfigured && (
         <button className="flex items-center h-5 px-1.5 rounded-md transition-colors hover:bg-white/[0.06] hover:text-gray-300 flex-shrink-0" onClick={onLock} title="Lock Terminyxx (Ctrl+Shift+L)">
           <Lock size={11} />
@@ -122,6 +143,7 @@ export function StatusBar({ tab, size, sftpOpen, openTabs, onToggleSftp, onDisco
       )}
       {tab && <span>UTF-8</span>}
       {tab && <span>xterm-256color</span>}
+      {tab && status === 'connected' && <TunnelsPopover tab={tab} />}
       {status === 'connected' && (
         <button
           className={`flex items-center gap-1 h-5 px-2 rounded-md transition-colors ${

@@ -7,6 +7,7 @@ import { ClipboardPaste, Copy, Eraser, TextSelect } from 'lucide-react';
 import { useContextMenu } from '../ui/ContextMenu';
 import type { MenuEntry } from '../ui/ContextMenu';
 import { BrowserOpenURL, EventsOn } from '../../../wailsjs/runtime/runtime';
+import { inputTargets } from '../../lib/broadcast';
 import { SSHResizePTY, SSHStartShell, SSHWriteInput } from '../../../wailsjs/go/main/App';
 import { fontStack, getSettings, subscribeSettings } from '../../lib/settings';
 import type { AppSettings } from '../../lib/settings';
@@ -159,7 +160,7 @@ export function XTermWrapper({ connectionId, visible, focused, connected, menuEx
     });
 
     term.onData((data) => {
-      SSHWriteInput(connectionId, data).catch(() => {});
+      for (const id of inputTargets(connectionId)) SSHWriteInput(id, data).catch(() => {});
     });
 
     const copy = () => {

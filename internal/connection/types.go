@@ -32,6 +32,12 @@ type ConnectRequest struct {
 	// AgentForwarding forwards the local ssh-agent to this host; it only
 	// takes effect when the global setting allows agent forwarding.
 	AgentForwarding bool `json:"agentForwarding"`
+	// Jump lists the ProxyJump hosts to pass through, first hop first. Each
+	// entry needs its own credentials.
+	Jump []ConnectRequest `json:"jump"`
+	// JumpFor is the saved host whose jump chain (and auto-start tunnels)
+	// applies; unlike ProfileID it is kept when the password is re-entered.
+	JumpFor string `json:"jumpFor"`
 }
 
 type FileEntry struct {

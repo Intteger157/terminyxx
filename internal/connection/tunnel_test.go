@@ -1,0 +1,175 @@
+package connection
+
+import (
+	"io"
+	"net"
+	"strconv"
+	"testing"
+	"time"
+)
+
+// echoServer accepts connections and echoes with an "echo:" prefix.
+func echoServer(t *testing.T) (host string, port int) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer c.Close()
+				buf := make([]byte, 64)
+				n, _ := c.Read(buf)
+				c.Write(append([]byte("echo:"), buf[:n]...))
+			}()
+		}
+	}()
+	h, p, _ := net.SplitHostPort(ln.Addr().String())
+	pn, _ := strconv.Atoi(p)
+	return h, pn
+}
+
+func roundTrip(t *testing.T, addr, msg string) string {
+	t.Helper()
+	c, err := net.DialTimeout("tcp", addr, 3*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	c.SetDeadline(time.Now().Add(5 * time.Second))
+	c.Write([]byte(msg))
+	out, _ := io.ReadAll(c)
+	return string(out)
+}
+
+func connected(t *testing.T) (*ConnectionManager, string) {
+	t.Helper()
+	srv := newTestServer(t, serverOpts{password: "secret"})
+	m, _, _ := newManager(t)
+	connectTrusted(t, m, passwordReq(srv, "c1"))
+	return m, "c1"
+}
+
+func TestLocalForward(t *testing.T) {
+	m, id := connected(t)
+	h, p := echoServer(t)
+	info, err := m.StartTunnel(id, TunnelSpec{ID: "t", Kind: TunnelLocal, DestHost: h, DestPort: p})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := roundTrip(t, info.ListenAddr, "hi"); got != "echo:hi" {
+		t.Fatalf("got %q", got)
+	}
+	list, _ := m.ListTunnels(id)
+	if len(list) != 1 || list[0].Total != 1 {
+		t.Fatalf("list: %+v", list)
+	}
+	if err := m.StopTunnel(id, "t"); err != nil {
+		t.Fatal(err)
+	}
+	if c, err := net.DialTimeout("tcp", info.ListenAddr, time.Second); err == nil {
+		c.Close()
+		t.Fatal("listener still open after stop")
+	}
+}
+
+func TestRemoteForward(t *testing.T) {
+	m, id := connected(t)
+	h, p := echoServer(t)
+	info, err := m.StartTunnel(id, TunnelSpec{ID: "r", Kind: TunnelRemote, BindHost: "127.0.0.1", BindPort: 0 + freePort(t), DestHost: h, DestPort: p})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The test server listens locally on the requested port.
+	if got := roundTrip(t, net.JoinHostPort("127.0.0.1", strconv.Itoa(info.BindPort)), "yo"); got != "echo:yo" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func freePort(t *testing.T) int {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	return ln.Addr().(*net.TCPAddr).Port
+}
+
+func TestDynamicSOCKS(t *testing.T) {
+	m, id := connected(t)
+	h, p := echoServer(t)
+	info, err := m.StartTunnel(id, TunnelSpec{ID: "d", Kind: TunnelDynamic})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := net.DialTimeout("tcp", info.ListenAddr, 3*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	c.SetDeadline(time.Now().Add(5 * time.Second))
+	c.Write([]byte{5, 1, 0})
+	resp := make([]byte, 2)
+	io.ReadFull(c, resp)
+	if resp[0] != 5 || resp[1] != 0 {
+		t.Fatalf("method reply %v", resp)
+	}
+	req := []byte{5, 1, 0, 3, byte(len(h))}
+	req = append(req, h...)
+	req = append(req, byte(p>>8), byte(p))
+	c.Write(req)
+	reply := make([]byte, 10)
+	io.ReadFull(c, reply)
+	if reply[1] != 0 {
+		t.Fatalf("connect failed: %v", reply)
+	}
+	c.Write([]byte("ping"))
+	out, _ := io.ReadAll(c)
+	if string(out) != "echo:ping" {
+		t.Fatalf("got %q", out)
+	}
+}
+
+func TestTunnelValidation(t *testing.T) {
+	m, id := connected(t)
+	if _, err := m.StartTunnel(id, TunnelSpec{ID: "x", Kind: TunnelLocal}); err == nil {
+		t.Error("local tunnel without destination should fail")
+	}
+	if _, err := m.StartTunnel(id, TunnelSpec{ID: "x", Kind: "bogus"}); err == nil {
+		t.Error("unknown kind should fail")
+	}
+}
+
+func TestProxyJump(t *testing.T) {
+	jump := newTestServer(t, serverOpts{password: "jp"})
+	target := newTestServer(t, serverOpts{password: "secret"})
+	m, _, _ := newManager(t)
+	req := passwordReq(target, "viajump")
+	req.Jump = []ConnectRequest{{Host: jump.host, Port: jump.port, Username: "u", AuthType: "password", Password: "jp"}}
+
+	// First attempt stops at the jump host's unknown key, then the target's.
+	for i := 0; i < 3; i++ {
+		err := m.Connect(req)
+		if err == nil {
+			break
+		}
+		hk, ok := err.(*HostKeyError)
+		if !ok {
+			t.Fatalf("connect: %v", err)
+		}
+		req.AcceptHostKey = hk.Fingerprint
+	}
+	if _, err := m.get("viajump"); err != nil {
+		t.Fatal("not connected via jump host")
+	}
+	if err := m.StartShell("viajump", 80, 24); err != nil {
+		t.Fatal(err)
+	}
+}
