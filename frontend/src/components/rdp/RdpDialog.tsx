@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { RDPOptions, RDPProfile } from '../../types';
 import { Modal } from '../ui/Dialogs';
-import { Field, Toggle } from '../terminal/ConnectDialog';
+import { Field, ProtocolSwitch, Toggle } from '../terminal/ConnectDialog';
 import { DEFAULT_RDP_OPTIONS } from '../../lib/profiles';
 import { SelectFolder } from '../../../wailsjs/go/main/App';
 
@@ -9,6 +9,8 @@ interface RdpDialogProps {
   initial?: Partial<RDPProfile>;
   onClose: () => void;
   onSave: (profile: RDPProfile) => void;
+  /** Shown for a brand-new host: switches to the SSH dialog, carrying over what was typed. */
+  onSwitchToSsh?: (carry: { host: string; folderId: string }) => void;
 }
 
 const RESOLUTIONS: [number, number][] = [
@@ -26,7 +28,7 @@ const AUDIO: { id: RDPOptions['audio']; label: string }[] = [
 
 const isMac = typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform);
 
-export function RdpDialog({ initial, onClose, onSave }: RdpDialogProps) {
+export function RdpDialog({ initial, onClose, onSave, onSwitchToSsh }: RdpDialogProps) {
   const [name, setName] = useState(initial?.name ?? '');
   const [host, setHost] = useState(initial?.host ?? '');
   const [port, setPort] = useState(initial?.port ?? 3389);
@@ -75,6 +77,7 @@ export function RdpDialog({ initial, onClose, onSave }: RdpDialogProps) {
   return (
     <Modal title="RDP profile" subtitle="Opens in the system's Remote Desktop client." onClose={onClose}>
       <form onSubmit={handleSubmit} className="px-5 pb-5 pt-1 space-y-4 max-h-[70vh] overflow-y-auto">
+        {onSwitchToSsh && !initial?.id && <ProtocolSwitch value="rdp" onChange={() => onSwitchToSsh({ host: host.trim(), folderId: initial?.folderId ?? '' })} />}
         <div className="grid grid-cols-[1fr_88px] gap-2">
           <Field label="Host">
             <input className="input-field font-mono" value={host} onChange={(e) => setHost(e.target.value)} required autoFocus spellCheck={false} />
