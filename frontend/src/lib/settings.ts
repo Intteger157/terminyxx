@@ -40,6 +40,10 @@ export interface AppSettings {
     enabled: boolean;
     rules: HighlightRule[];
   };
+  updates: {
+    /** Look for a newer GitHub release at startup. */
+    autoCheck: boolean;
+  };
   /**
    * Mirrors `security.SecurityConfig` in internal/security/config.go: the Go
    * side decodes this part of the JSON on every save and enforces it.
@@ -181,6 +185,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     enabled: true,
     rules: DEFAULT_RULES,
   },
+  updates: { autoCheck: true },
   security: {
     hideFromCapture: true,
     lock: { biometrics: false, autoLockMinutes: 15, lockOnMinimize: false },
@@ -242,6 +247,7 @@ function normalize(raw: unknown): AppSettings {
             }))
         : DEFAULT_RULES,
     },
+    updates: { autoCheck: (r.updates?.autoCheck ?? true) !== false },
     security: {
       hideFromCapture: sec.hideFromCapture !== false,
       lock: {

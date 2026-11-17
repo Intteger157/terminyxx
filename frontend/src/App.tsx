@@ -23,6 +23,7 @@ import { RdpDialog } from './components/rdp/RdpDialog';
 import { SettingsDialog } from './components/settings/SettingsDialog';
 import type { SettingsSection } from './components/settings/SettingsDialog';
 import { useDialogs, errorText } from './components/ui/Dialogs';
+import { checkForUpdate, loadVersion } from './lib/updates';
 import { useHotkeys } from './hooks/useHotkeys';
 import { ConnectCancelled, connectWithPrompts } from './lib/connect';
 import { LockScreen } from './components/security/LockScreen';
@@ -88,6 +89,19 @@ function App() {
     setClipboardNotifier((s) => dialogs.toast(`Copied. The clipboard will be cleared in ${s} s.`));
     return () => setClipboardNotifier(null);
   }, [dialogs]);
+
+  // Startup update check: quiet unless a newer release exists.
+  useEffect(() => {
+    loadVersion();
+    if (!getSettings().updates.autoCheck) return;
+    const t = window.setTimeout(() => {
+      void checkForUpdate().then((u) => {
+        if (u.result?.available) dialogs.toast(`Terminyxx ${u.result.latest} is available. See Settings → About.`, 'info');
+      });
+    }, 3000);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const lockApp = async () => {
     if (await lockNow()) return;
@@ -630,6 +644,7 @@ function App() {
         onDisconnect={() => activeTab && handleDisconnect(activeTab.id)}
         onReconnect={() => activeTab && handleReconnect(activeTab)}
         onOpenSecurity={() => setSettingsOpen('security')}
+        onOpenUpdates={() => setSettingsOpen('about')}
         masking={masking}
         onToggleMasking={toggleMasking}
         lockConfigured={lock.configured}
