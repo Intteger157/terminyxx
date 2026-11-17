@@ -6,6 +6,8 @@
 
 **A fast, private SSH terminal, SFTP file manager and RDP launcher for Windows and macOS.**
 
+Tunnels · jump hosts · snippets · session recording · Telnet and serial · encrypted sync
+
 [![CI](https://github.com/Intteger157/terminyxx/actions/workflows/ci.yml/badge.svg)](https://github.com/Intteger157/terminyxx/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/Intteger157/terminyxx?include_prereleases&color=7c6af7)](https://github.com/Intteger157/terminyxx/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -30,11 +32,18 @@ small, and needs no Electron or bundled browser.
 - Terminal themes, keyword highlighting and a command palette (`Ctrl+Shift+P`) with quick-connect for `user@host:port`
 - Auth by password, keyboard-interactive, key files (OpenSSH, **PuTTY `.ppk`**) and **ssh-agent** (including the Windows OpenSSH agent)
 - Host key verification with a trusted-hosts manager
+- **Jump hosts** (ProxyJump chains through saved hosts) and **port forwarding**: local (`-L`), remote (`-R`) and SOCKS5 (`-D`), started with the host or from the status bar
+- **Snippets** with `{{placeholders}}`, and **typing in all panes** of a split tab at once
+- **Session recording** (asciicast v2, never keystrokes) with playback, seeking and full-text search across all recordings
+- Optional server monitor in the status bar: CPU, RAM, disk and network for Linux hosts
+- **Containers**: open a shell in a Docker / Podman container or a Kubernetes pod in a new pane
+- **Telnet** and **serial ports** (baud, parity, stop bits) next to SSH
 
 ### SFTP
 - Dual-pane **Total Commander-style** file manager (F3 / F5 / F6 / F7 / F8, multi-select, drag between panes)
 - Recursive, concurrent transfers with progress and cancel; drop files from Explorer / Finder to upload
 - Reuses the terminal's SSH connection, so no second login
+- **Edit remote files** with `F4`: conflict detection, atomic save, CRLF preserved
 
 ### Host library
 - Folders, colors, drag-and-drop ordering; SSH and RDP hosts side by side
@@ -43,6 +52,11 @@ small, and needs no Electron or bundled browser.
 
 ### RDP
 - One-click launch through the native client (`mstsc` on Windows, the system RDP client on macOS)
+- Per-host **redirection**: printers, drives and shared folders, smart cards, COM and USB, audio and microphone, cameras, multiple monitors, RD Gateway
+- Saved password kept in the OS keychain and handed to the Windows credential store at launch
+
+### Sync
+- **Encrypted sync file**: export hosts, folders and snippets to one file (Argon2id + AES-256-GCM) and import it on another computer, through any cloud folder or git repository
 
 ### Security
 - **App lock** with an Argon2id master password, auto-lock on inactivity / minimize / sleep, **Windows Hello** and **Touch ID**
@@ -78,6 +92,9 @@ App shortcuts use `Ctrl+Shift`, so plain `Ctrl` keys stay with your shell (on ma
 | `Ctrl+Shift+[` / `]` | Previous / next tab |
 | `Ctrl+Shift+L` | Lock the app |
 | `Ctrl+Shift+M` | Toggle output masking |
+| `Ctrl+Shift+S` | Snippets |
+| `Ctrl+Shift+G` | Type in all panes of the tab |
+| `F4` (SFTP panel) | Edit the selected server file |
 | `Ctrl+,` | Settings |
 
 ## Build from source
@@ -104,7 +121,9 @@ Set `TERMINYXX_DATA_DIR=<dir>` to keep the database and `known_hosts` somewhere 
 
 ```
 app.go, app_security.go   Wails-bound API exposed to the UI
-internal/connection       SSH, PTY, SFTP, transfers, host keys, auth
+internal/connection       SSH, jump hosts, tunnels, PTY, SFTP, Telnet/serial, host keys, auth
+internal/recording        Session recordings (asciicast v2), playback data, search
+internal/syncfile         Encrypted sync file format
 internal/store            SQLite storage, migrations, OS keychain secrets
 internal/importers        Import from other SSH clients
 internal/security         App lock, biometrics, masking, policy
@@ -128,7 +147,8 @@ Inno Setup and publishes everything with checksums. A tag with a suffix (`v0.2.0
 
 ## Roadmap
 
-- Jump hosts (`ProxyJump`) and port forwarding
+- Saved profiles for Telnet and serial sessions
+- `ProxyJump` import from OpenSSH configs
 - Pageant support
 
 ## License
