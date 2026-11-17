@@ -2,7 +2,7 @@ name: Release
 
 # Push a tag like v0.1.2 to build every platform and publish a GitHub release:
 #   Windows x64 + arm64: Inno Setup installer and portable exe
-#   macOS universal (Intel + Apple Silicon): .dmg and .zip, ad-hoc signed
+#   macOS x64 (Intel) + arm64 (Apple Silicon), macOS 12 Monterey or newer: .dmg and .zip, ad-hoc signed
 # Run it by hand (workflow_dispatch) to build everything as artifacts without releasing.
 on:
   push:
@@ -113,8 +113,22 @@ jobs:
   macos:
     needs: version
     runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goarch: amd64
+            arch: x64
+            lipo: x86_64
+          - goarch: arm64
+            arch: arm64
+            lipo: arm64
     env:
       VERSION: ${{ needs.version.outputs.version }}
+      # Minimum supported macOS: 12 Monterey (also set as LSMinimumSystemVersion in Info.plist).
+      MACOSX_DEPLOYMENT_TARGET: '12.0'
+      CGO_CFLAGS: -mmacosx-version-min=12.0
+      CGO_LDFLAGS: -mmacosx-version-min=12.0
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -133,9 +147,9 @@ jobs:
       - name: Install Wails
         run: go install github.com/wailsapp/wails/v2/cmd/wails@${{ env.WAILS_VERSION }}
 
-      # One universal bundle covers Intel (amd64) and Apple Silicon (arm64).
+      # The runner is Apple Silicon; the Intel build is cross-compiled with clang.
       - name: Build app
-        run: wails build -clean -platform darwin/universal -trimpath -ldflags "-s -w"
+        run: wails build -clean -platform darwin/${{ matrix.goarch }} -trimpath -ldflags "-s -w"
 
       - name: Bundle, check and sign
         run: |
@@ -144,7 +158,9 @@ jobs:
           app=build/bin/Terminyxx.app
           exe="$app/Contents/MacOS/$(defaults read "$PWD/$app/Contents/Info" CFBundleExecutable)"
           archs=$(lipo -archs "$exe"); echo "Architectures: $archs"
-          [[ "$archs" == *x86_64* && "$archs" == *arm64* ]] || { echo "not universal"; exit 1; }
+          [ "$archs" = "${{ matrix.lipo }}" ] || { echo "expected ${{ matrix.lipo }}"; exit 1; }
+          minos=$(otool -l "$exe" | awk '/LC_BUILD_VERSION/{f=1} f&&/minos/{print $2; exit}'); echo "minos: $minos"
+          [ "${minos%%.*}" -le 12 ] || { echo "minimum macOS is above 12"; exit 1; }
           # Not notarized: an ad-hoc signature is the minimum Apple Silicon needs to run it.
           codesign --force --deep --sign - "$app"
           codesign --verify --deep --strict --verbose=2 "$app"
@@ -154,13 +170,13 @@ jobs:
           mkdir -p dist dmg
           cp -R build/bin/Terminyxx.app dmg/
           ln -s /Applications dmg/Applications
-          hdiutil create -volname "Terminyxx" -srcfolder dmg -ov -format UDZO "dist/Terminyxx-$VERSION-macos-universal.dmg"
-          ditto -c -k --keepParent build/bin/Terminyxx.app "dist/Terminyxx-$VERSION-macos-universal.zip"
+          hdiutil create -volname "Terminyxx" -srcfolder dmg -ov -format UDZO "dist/Terminyxx-$VERSION-macos-${{ matrix.arch }}.dmg"
+          ditto -c -k --keepParent build/bin/Terminyxx.app "dist/Terminyxx-$VERSION-macos-${{ matrix.arch }}.zip"
           ls -la dist
 
       - uses: actions/upload-artifact@v4
         with:
-          name: terminyxx-${{ env.VERSION }}-macos-universal
+          name: terminyxx-${{ env.VERSION }}-macos-${{ matrix.arch }}
           path: dist/*
           if-no-files-found: error
 
@@ -191,7 +207,8 @@ jobs:
           |---|---|
           | Windows x64 | `*-windows-x64-setup.exe` (installer) or `*-windows-x64-portable.exe` |
           | Windows ARM64 | `*-windows-arm64-setup.exe` or `*-windows-arm64-portable.exe` |
-          | macOS (Intel and Apple Silicon) | `*-macos-universal.dmg` or `.zip` |
+          | macOS Intel (12 Monterey or newer) | `*-macos-x64.dmg` or `.zip` |
+          | macOS Apple Silicon (12 Monterey or newer) | `*-macos-arm64.dmg` or `.zip` |
 
           The macOS app is not notarized. If macOS says it is damaged or can't be opened,
           run `xattr -dr com.apple.quarantine /Applications/Terminyxx.app` once.
