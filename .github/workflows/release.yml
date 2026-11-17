@@ -200,19 +200,40 @@ jobs:
           GH_REPO: ${{ github.repository }}
           VERSION: ${{ needs.version.outputs.version }}
         run: |
-          cat > notes.md <<'EOF'
+          base="https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME"
+          cat > notes.md <<EOF
+          # Terminyxx $VERSION
+
+          > SSH terminal, SFTP file manager and RDP launcher for Windows and macOS.
+
           ## Downloads
 
-          | Platform | File |
-          |---|---|
-          | Windows x64 | `*-windows-x64-setup.exe` (installer) or `*-windows-x64-portable.exe` |
-          | Windows ARM64 | `*-windows-arm64-setup.exe` or `*-windows-arm64-portable.exe` |
-          | macOS Intel (12 Monterey or newer) | `*-macos-x64.dmg` or `.zip` |
-          | macOS Apple Silicon (12 Monterey or newer) | `*-macos-arm64.dmg` or `.zip` |
+          | Platform | Installer | Portable |
+          |:--|:--|:--|
+          | 🪟 **Windows** x64 | [Terminyxx-$VERSION-windows-x64-setup.exe]($base/Terminyxx-$VERSION-windows-x64-setup.exe) | [portable .exe]($base/Terminyxx-$VERSION-windows-x64-portable.exe) |
+          | 🪟 **Windows** ARM64 | [Terminyxx-$VERSION-windows-arm64-setup.exe]($base/Terminyxx-$VERSION-windows-arm64-setup.exe) | [portable .exe]($base/Terminyxx-$VERSION-windows-arm64-portable.exe) |
+          | 🍎 **macOS** Intel (12+) | [Terminyxx-$VERSION-macos-x64.dmg]($base/Terminyxx-$VERSION-macos-x64.dmg) | [.zip]($base/Terminyxx-$VERSION-macos-x64.zip) |
+          | 🍎 **macOS** Apple Silicon (12+) | [Terminyxx-$VERSION-macos-arm64.dmg]($base/Terminyxx-$VERSION-macos-arm64.dmg) | [.zip]($base/Terminyxx-$VERSION-macos-arm64.zip) |
 
-          The macOS app is not notarized. If macOS says it is damaged or can't be opened,
-          run `xattr -dr com.apple.quarantine /Applications/Terminyxx.app` once.
+          Verify downloads with [\`SHA256SUMS.txt\`]($base/SHA256SUMS.txt).
+
+          <details>
+          <summary>macOS: "app is damaged" or can't be opened</summary>
+
+          The app is not notarized. Run this once after moving it to Applications:
+
+          \`\`\`bash
+          xattr -dr com.apple.quarantine /Applications/Terminyxx.app
+          \`\`\`
+
+          </details>
+
+          Already installed? Terminyxx checks GitHub for new releases at startup (Settings → About).
+
+          ---
+
           EOF
+          sed -i 's/^          //' notes.md
           flags=(--title "Terminyxx $VERSION" --notes-file notes.md --generate-notes)
           [ "${{ needs.version.outputs.prerelease }}" = true ] && flags+=(--prerelease)
           gh release create "$GITHUB_REF_NAME" dist/* "${flags[@]}"

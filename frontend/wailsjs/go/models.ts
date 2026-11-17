@@ -368,3 +368,32 @@ export namespace store {
 
 }
 
+export namespace updater {
+	
+	export class Result {
+	    current: string;
+	    latest: string;
+	    available: boolean;
+	    url: string;
+	    notes: string;
+	    downloadUrl: string;
+	    downloadName: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Result(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.current = source["current"];
+	        this.latest = source["latest"];
+	        this.available = source["available"];
+	        this.url = source["url"];
+	        this.notes = source["notes"];
+	        this.downloadUrl = source["downloadUrl"];
+	        this.downloadName = source["downloadName"];
+	    }
+	}
+
+}
+

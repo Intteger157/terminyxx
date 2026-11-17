@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { ReactNode } from 'react';
-import { ArrowDown, ArrowUp, Check, Highlighter, Keyboard, Palette, Pencil, Plus, RotateCcw, ShieldCheck, SquareTerminal, Trash2, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, Check, Download, Highlighter, Info, Loader2, RefreshCw, Keyboard, Palette, Pencil, Plus, RotateCcw, ShieldCheck, SquareTerminal, Trash2, X } from 'lucide-react';
 import { Modal } from '../ui/Dialogs';
 import { Select } from '../ui/Select';
 import { TerminalPreview } from './TerminalPreview';
@@ -10,8 +10,10 @@ import { THEMES, themeById } from '../../lib/themes';
 import type { TerminalTheme } from '../../lib/themes';
 import { compileRule } from '../../lib/highlight';
 import { SecuritySection } from './SecuritySection';
+import { BrowserOpenURL } from '../../../wailsjs/runtime/runtime';
+import { checkForUpdate, useUpdates } from '../../lib/updates';
 
-export type SettingsSection = 'appearance' | 'terminal' | 'highlight' | 'security' | 'shortcuts';
+export type SettingsSection = 'appearance' | 'terminal' | 'highlight' | 'security' | 'shortcuts' | 'about';
 
 const SECTIONS: { id: SettingsSection; label: string; icon: ReactNode }[] = [
   { id: 'appearance', label: 'Appearance', icon: <Palette size={15} /> },
@@ -19,6 +21,7 @@ const SECTIONS: { id: SettingsSection; label: string; icon: ReactNode }[] = [
   { id: 'highlight', label: 'Highlighting', icon: <Highlighter size={15} /> },
   { id: 'security', label: 'Security', icon: <ShieldCheck size={15} /> },
   { id: 'shortcuts', label: 'Shortcuts', icon: <Keyboard size={15} /> },
+  { id: 'about', label: 'About', icon: <Info size={15} /> },
 ];
 
 export function SettingsDialog({ modKey, initial = 'appearance', onClose }: { modKey: string; initial?: SettingsSection; onClose: () => void }) {
@@ -48,6 +51,7 @@ export function SettingsDialog({ modKey, initial = 'appearance', onClose }: { mo
           {section === 'highlight' && <HighlightSection settings={settings} />}
           {section === 'security' && <SecuritySection settings={settings} modKey={modKey} />}
           {section === 'shortcuts' && <ShortcutsSection modKey={modKey} />}
+          {section === 'about' && <AboutSection settings={settings} />}
         </div>
       </div>
     </Modal>
@@ -451,6 +455,54 @@ function ShortcutsSection({ modKey }: { modKey: string }) {
           </div>
         </Section>
       ))}
+    </div>
+  );
+}
+
+// ── About / updates ───────────────────────────────────────────────────
+
+function AboutSection({ settings }: { settings: AppSettings }) {
+  const u = useUpdates();
+  const r = u.result;
+  return (
+    <div className="space-y-6">
+      <Section title="Terminyxx">
+        <Row label="Version" hint="SSH terminal, SFTP file manager and RDP launcher.">
+          <span className="font-mono text-[13px] text-gray-200">{u.version || '…'}</span>
+        </Row>
+      </Section>
+
+      <Section
+        title="Updates"
+        action={
+          <button className="btn-secondary h-7 px-2.5 text-xs" onClick={() => void checkForUpdate()} disabled={u.checking}>
+            {u.checking ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />} Check for updates
+          </button>
+        }
+      >
+        <Row label="Check at startup" hint="Looks for a newer release on GitHub when the app starts. Nothing is downloaded or installed automatically.">
+          <Toggle checked={settings.updates.autoCheck} onChange={(v) => updateSettings((s) => ({ ...s, updates: { ...s.updates, autoCheck: v } }))} />
+        </Row>
+
+        {u.error && <p className="mt-3 text-xs text-red-400">Could not check for updates: {u.error}</p>}
+        {r && !u.error && !r.available && <p className="mt-3 text-xs text-emerald-400">You are up to date (version {r.current}).</p>}
+        {r && r.available && (
+          <div className="mt-3 rounded-lg border border-accent/30 bg-accent/10 p-3">
+            <div className="text-[13px] text-gray-100">Version {r.latest} is available</div>
+            {r.notes && <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap font-sans text-2xs text-gray-400">{r.notes}</pre>}
+            <div className="mt-3 flex gap-2">
+              {r.downloadUrl && (
+                <button className="btn-primary h-7 px-2.5 text-xs" onClick={() => BrowserOpenURL(r.downloadUrl)}>
+                  <Download size={12} /> Download {r.downloadName}
+                </button>
+              )}
+              <button className="btn-secondary h-7 px-2.5 text-xs" onClick={() => BrowserOpenURL(r.url)}>
+                Release page
+              </button>
+            </div>
+          </div>
+        )}
+      </Section>
     </div>
   );
 }
