@@ -75,7 +75,7 @@ export function RdpDialog({ initial, onClose, onSave, onSwitchToSsh }: RdpDialog
   };
 
   return (
-    <Modal title="RDP profile" subtitle="Opens in the system's Remote Desktop client." onClose={onClose}>
+    <Modal title="RDP profile" subtitle="Opens in a tab with the built-in client, or in the system's client (Settings → Terminal)." onClose={onClose}>
       <form onSubmit={handleSubmit} className="px-5 pb-5 pt-1 space-y-4 max-h-[70vh] overflow-y-auto">
         {onSwitchToSsh && !initial?.id && <ProtocolSwitch value="rdp" onChange={() => onSwitchToSsh({ host: host.trim(), folderId: initial?.folderId ?? '' })} />}
         <div className="grid grid-cols-[1fr_88px] gap-2">

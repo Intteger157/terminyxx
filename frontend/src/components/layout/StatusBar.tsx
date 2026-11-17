@@ -40,7 +40,8 @@ export function StatusBar({ tab, size, sftpOpen, openTabs, onToggleSftp, onDisco
   const protection = useCaptureProtection();
   const update = useUpdates().result;
   const status = tab?.status;
-  const sftpOnly = !!tab?.profile?.sftpOnly;
+  // SFTP-only and RDP panes have no terminal: hide the terminal-only items.
+  const sftpOnly = !!tab?.profile?.sftpOnly || !!tab?.rdp;
   const dot =
     status === 'connected'
       ? 'bg-emerald-400 shadow-[0_0_6px_rgb(52_211_153/0.8)]'
@@ -59,6 +60,12 @@ export function StatusBar({ tab, size, sftpOpen, openTabs, onToggleSftp, onDisco
             {LABEL[tab.status]}
           </span>
           {tab.stream && <span className="font-mono text-gray-500 truncate">{tab.stream.kind === 'telnet' ? `${tab.stream.host}:${tab.stream.port}` : `${tab.stream.device} · ${tab.stream.baud} ${tab.stream.dataBits}${tab.stream.parity[0].toUpperCase()}${tab.stream.stopBits}`}</span>}
+          {tab.rdp && (
+            <span className="font-mono text-gray-500 truncate">
+              RDP · {tab.rdp.username ? `${tab.rdp.username}@` : ''}{tab.rdp.host}
+              {tab.rdp.port && tab.rdp.port !== 3389 ? `:${tab.rdp.port}` : ''}
+            </span>
+          )}
           {tab.profile && (
             <span className="font-mono text-gray-500 truncate">
               {tab.profile.username}@{tab.profile.host}
@@ -72,7 +79,7 @@ export function StatusBar({ tab, size, sftpOpen, openTabs, onToggleSftp, onDisco
           )}
           {(status === 'disconnected' || status === 'idle') && (
             <button className="btn-ghost h-5 px-1.5 text-2xs text-accent hover:text-accent-hover" onClick={onReconnect}>
-              {tab.profile || tab.stream ? <RotateCw size={11} /> : <Plug size={11} />} {tab.profile || tab.stream ? 'Reconnect' : 'Connect'}
+              {tab.profile || tab.stream || tab.rdp ? <RotateCw size={11} /> : <Plug size={11} />} {tab.profile || tab.stream || tab.rdp ? 'Reconnect' : 'Connect'}
             </button>
           )}
         </>

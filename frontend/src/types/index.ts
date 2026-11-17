@@ -1,3 +1,5 @@
+import type { main } from '../../wailsjs/go/models';
+
 export interface FileEntry {
   name: string;
   path: string;
@@ -102,6 +104,10 @@ export interface TerminalTab {
   profile?: SSHProfile;
   /** Telnet or serial session (no SSH profile). */
   stream?: StreamSpec;
+  /** Built-in RDP session (no SSH profile). */
+  rdp?: RDPProfile;
+  /** The current single-use RDP session ticket; a new one restarts the pane. */
+  rdpSession?: main.RDPSession;
 }
 
 export interface StreamSpec {

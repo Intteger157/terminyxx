@@ -7,11 +7,11 @@ import react from '@vitejs/plugin-react'
 // scripts. frame-ancestors is header-only, so it isn't repeated here.
 const CSP = [
   "default-src 'self'",
-  "script-src 'self'",
+  "script-src 'self' 'wasm-unsafe-eval'",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob:",
   "font-src 'self' data:",
-  "connect-src 'self'",
+  "connect-src 'self' data: ws://127.0.0.1:*",
   "media-src 'none'",
   "object-src 'none'",
   "frame-src 'none'",

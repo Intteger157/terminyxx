@@ -407,6 +407,39 @@ export namespace importers {
 
 }
 
+export namespace main {
+	
+	export class RDPSession {
+	    proxyUrl: string;
+	    token: string;
+	    destination: string;
+	    username: string;
+	    password: string;
+	    domain: string;
+	    width: number;
+	    height: number;
+	    clipboard: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new RDPSession(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.proxyUrl = source["proxyUrl"];
+	        this.token = source["token"];
+	        this.destination = source["destination"];
+	        this.username = source["username"];
+	        this.password = source["password"];
+	        this.domain = source["domain"];
+	        this.width = source["width"];
+	        this.height = source["height"];
+	        this.clipboard = source["clipboard"];
+	    }
+	}
+
+}
+
 export namespace rdp {
 	
 	export class Options {

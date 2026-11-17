@@ -150,6 +150,18 @@ export function PickImportPaths(arg1) {
   return window['go']['main']['App']['PickImportPaths'](arg1);
 }
 
+export function RDPClose(arg1) {
+  return window['go']['main']['App']['RDPClose'](arg1);
+}
+
+export function RDPLastError(arg1) {
+  return window['go']['main']['App']['RDPLastError'](arg1);
+}
+
+export function RDPOpen(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['RDPOpen'](arg1, arg2, arg3, arg4);
+}
+
 export function ReadImport(arg1, arg2) {
   return window['go']['main']['App']['ReadImport'](arg1, arg2);
 }

@@ -28,6 +28,8 @@ import type { PaneDrag } from './lib/paneDrag';
 import { ConnectDialog } from './components/terminal/ConnectDialog';
 import { SftpPanel } from './components/sftp/SftpPanel';
 import { RdpDialog } from './components/rdp/RdpDialog';
+import { RdpPane } from './components/rdp/RdpPane';
+import { openRdpSession } from './lib/rdpConnect';
 import { SettingsDialog } from './components/settings/SettingsDialog';
 import type { SettingsSection } from './components/settings/SettingsDialog';
 import { useDialogs, errorText, modalSwap } from './components/ui/Dialogs';
@@ -42,7 +44,7 @@ import { modKey, usePlatform } from './lib/hosts';
 import type { QuickTarget } from './lib/hosts';
 import type { RDPProfile, SSHProfile, StreamSpec, TerminalTab } from './types';
 import { EventsOn } from '../wailsjs/runtime/runtime';
-import { LaunchRDP, SaveRDPProfile, SaveSSHProfile, SSHDisconnect } from '../wailsjs/go/main/App';
+import { LaunchRDP, RDPClose, SaveRDPProfile, SaveSSHProfile, SSHDisconnect } from '../wailsjs/go/main/App';
 
 type ConnectDialogState = { key: number; tabId: string | null; initial?: Partial<SSHProfile> } | null;
 
@@ -87,6 +89,7 @@ function App() {
     editSSH: (p) => openConnectDialog(null, p),
     newSSH: (folderId) => openConnectDialog(null, { folderId }),
     editRDP: (p) => openRdpDialog(p),
+    connectRDP: (p, external) => handleConnectRDP(p, external),
     newRDP: (folderId) => openRdpDialog({ folderId }),
   });
   const sshProfiles = library.ssh;
@@ -306,6 +309,11 @@ function App() {
   };
 
   const handleDisconnect = async (id: string) => {
+    if (tabs.find((t) => t.id === id)?.rdp) {
+      RDPClose(id).catch(() => {});
+      patchTab(id, { status: 'disconnected' });
+      return;
+    }
     try {
       await SSHDisconnect(id);
     } catch {
@@ -339,7 +347,8 @@ function App() {
   };
 
   const handleReconnect = (tab: TerminalTab) => {
-    if (tab.stream) void connectStream(tab.id, tab.stream);
+    if (tab.rdp) void connectRdp(tab.id, tab.rdp);
+    else if (tab.stream) void connectStream(tab.id, tab.stream);
     else if (tab.profile) connectTab(tab.id, tab.profile);
     else openConnectDialog(tab.id);
   };
@@ -424,6 +433,9 @@ function App() {
     if (tab.profile) {
       const id = newTab(tab.profile.name, tab.profile.host, { target: tab.id, side });
       connectTab(id, tab.profile);
+    } else if (tab.rdp) {
+      const id = newTab(tab.rdp.name, tab.rdp.host, { target: tab.id, side });
+      void connectRdp(id, tab.rdp);
     } else {
       const id = newTab('New tab', '', { target: tab.id, side });
       openConnectDialog(id);
@@ -469,12 +481,47 @@ function App() {
     connectTab(id, profile);
   }
 
-  const handleConnectRDP = async (profile: RDPProfile) => {
-    try {
-      await LaunchRDP(profile.id);
-    } catch (err) {
-      dialogs.toast(`Failed to launch RDP: ${errorText(err)}`, 'error');
+  /** Opens an RDP host in a tab, or in the system's client (setting or `external`). */
+  const handleConnectRDP = async (profile: RDPProfile, external = false) => {
+    if (external || !getSettings().rdp.builtin) {
+      try {
+        await LaunchRDP(profile.id);
+      } catch (err) {
+        dialogs.toast(`Failed to launch RDP: ${errorText(err)}`, 'error');
+      }
+      return;
     }
+    const id = newTab(profile.name, profile.host);
+    await connectRdp(id, profile);
+  };
+
+  /** Gets a session ticket for an RDP tab; the RdpPane then connects with it. */
+  const connectRdp = async (tabId: string, profile: RDPProfile, password = '') => {
+    patchTab(tabId, { status: 'connecting', title: profile.name, host: profile.host, rdp: profile, profile: undefined, stream: undefined });
+    try {
+      const session = await openRdpSession(tabId, profile, dialogs, password);
+      patchTab(tabId, { started: true, rdpSession: session });
+    } catch (err) {
+      setTabs((prev) => prev.map((t) => (t.id === tabId ? { ...t, status: t.started ? 'disconnected' : 'idle' } : t)));
+      if (!(err instanceof ConnectCancelled)) dialogs.toast(`Could not connect to ${profile.host}: ${errorText(err)}`, 'error');
+    }
+  };
+
+  const handleRdpEnded = async (tab: TerminalTab, error: string | null, authFailed: boolean) => {
+    // Drop the spent ticket (and the password in it); a reconnect gets a new one.
+    patchTab(tab.id, { status: 'disconnected', rdpSession: undefined });
+    if (!error || !tab.rdp) return;
+    if (authFailed) {
+      const pw = await dialogs.prompt({
+        title: 'Wrong password',
+        label: `${error}. Password for ${tab.rdp.username ? `${tab.rdp.username}@` : ''}${tab.rdp.host}`,
+        password: true,
+        confirmLabel: 'Connect',
+      });
+      if (pw !== null) void connectRdp(tab.id, tab.rdp, pw);
+      return;
+    }
+    dialogs.toast(`RDP session with ${tab.rdp.host} ended: ${error}`, 'error');
   };
 
   const handleSaveRDP = async (profile: RDPProfile) => {
@@ -488,7 +535,7 @@ function App() {
   };
 
   const toggleSftp = () => {
-    if (activeTab?.status !== 'connected' || activeTab.stream || activeTab.profile?.sftpOnly) return;
+    if (activeTab?.status !== 'connected' || activeTab.stream || activeTab.rdp || activeTab.profile?.sftpOnly) return;
     setSftpOpenFor((s) => ({ ...s, [activeTab.id]: !s[activeTab.id] }));
   };
 
@@ -665,7 +712,23 @@ function App() {
               openMenu(e, [...paneEntries(id), { type: 'separator' }, { label: 'Close pane', icon: <X size={13} />, onSelect: () => handleCloseTab(id) }])
             }
             renderPane={(tab, { visible, focused }) =>
-              tab.started && tab.profile?.sftpOnly ? (
+              tab.started && tab.rdp ? (
+                <div className="absolute inset-0 bg-black">
+                  {tab.rdpSession && (
+                  <RdpPane
+                    tabId={tab.id}
+                    session={tab.rdpSession}
+                    visible={visible}
+                    focused={focused}
+                    dynamicResolution={tab.rdp.options?.dynamicRes ?? true}
+                    onConnected={() => patchTab(tab.id, { status: 'connected' })}
+                    onEnded={(error, auth) => void handleRdpEnded(tab, error, auth)}
+                  />
+                  )}
+                  {tab.status === 'connecting' && <RdpConnecting tab={tab} />}
+                  {tab.status !== 'connecting' && tab.status !== 'connected' && <StatusOverlay tab={tab} onReconnect={() => handleReconnect(tab)} />}
+                </div>
+              ) : tab.started && tab.profile?.sftpOnly ? (
                 // SFTP-only host: no shell, the file manager is the whole pane.
                 <>
                   {tab.status === 'connected' && (
@@ -687,7 +750,7 @@ function App() {
                   {tab.status !== 'connected' && <StatusOverlay tab={tab} onReconnect={() => handleReconnect(tab)} />}
                 </>
               ) : (
-                <PendingTab tab={tab} onConnect={() => openConnectDialog(tab.id)} />
+                <PendingTab tab={tab} onConnect={() => (tab.rdp ? void connectRdp(tab.id, tab.rdp) : openConnectDialog(tab.id))} />
               )
             }
           />
@@ -833,6 +896,15 @@ function PendingTab({ tab, onConnect }: { tab: TerminalTab; onConnect: () => voi
       <button className="btn-primary" onClick={onConnect}>
         Connect
       </button>
+    </div>
+  );
+}
+
+function RdpConnecting({ tab }: { tab: TerminalTab }) {
+  return (
+    <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/60 text-gray-300 animate-fade-in">
+      <Loader2 size={22} className="animate-spin text-accent" />
+      <span>Connecting to {tab.title}…</span>
     </div>
   );
 }

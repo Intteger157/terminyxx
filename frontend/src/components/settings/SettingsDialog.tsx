@@ -198,6 +198,11 @@ function TerminalSection({ settings }: { settings: AppSettings }) {
           <Toggle checked={t.bell} onChange={(v) => set({ bell: v })} />
         </Row>
       </Section>
+      <Section title="Remote desktop">
+        <Row label="Open RDP hosts in a tab" hint="Uses the built-in RDP client. Turn off to open them in the system's client (Remote Desktop Connection or Windows App) instead.">
+          <Toggle checked={settings.rdp.builtin} onChange={(v) => updateSettings((s) => ({ ...s, rdp: { ...s.rdp, builtin: v } }))} />
+        </Row>
+      </Section>
     </div>
   );
 }
