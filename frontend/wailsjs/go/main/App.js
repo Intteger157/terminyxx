@@ -78,6 +78,10 @@ export function LaunchRDP(arg1) {
   return window['go']['main']['App']['LaunchRDP'](arg1);
 }
 
+export function ListContainers(arg1, arg2) {
+  return window['go']['main']['App']['ListContainers'](arg1, arg2);
+}
+
 export function ListFolders() {
   return window['go']['main']['App']['ListFolders']();
 }
@@ -178,6 +182,10 @@ export function SFTPReadFile(arg1, arg2) {
   return window['go']['main']['App']['SFTPReadFile'](arg1, arg2);
 }
 
+export function SFTPReadForEdit(arg1, arg2) {
+  return window['go']['main']['App']['SFTPReadForEdit'](arg1, arg2);
+}
+
 export function SFTPRemove(arg1, arg2) {
   return window['go']['main']['App']['SFTPRemove'](arg1, arg2);
 }
@@ -188,6 +196,10 @@ export function SFTPRename(arg1, arg2, arg3) {
 
 export function SFTPTransfer(arg1, arg2) {
   return window['go']['main']['App']['SFTPTransfer'](arg1, arg2);
+}
+
+export function SFTPWriteEdited(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['SFTPWriteEdited'](arg1, arg2, arg3, arg4, arg5);
 }
 
 export function SSHConnect(arg1) {
@@ -242,6 +254,10 @@ export function SelectKeyFile() {
   return window['go']['main']['App']['SelectKeyFile']();
 }
 
+export function SerialPorts() {
+  return window['go']['main']['App']['SerialPorts']();
+}
+
 export function SetCaptureProtection(arg1) {
   return window['go']['main']['App']['SetCaptureProtection'](arg1);
 }
@@ -264,6 +280,10 @@ export function StopRecording(arg1) {
 
 export function StopTunnel(arg1, arg2) {
   return window['go']['main']['App']['StopTunnel'](arg1, arg2);
+}
+
+export function StreamConnect(arg1) {
+  return window['go']['main']['App']['StreamConnect'](arg1);
 }
 
 export function TestBiometrics() {

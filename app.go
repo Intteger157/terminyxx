@@ -192,6 +192,40 @@ func (a *App) autoStartTunnels(req connection.ConnectRequest) {
 	}
 }
 
+// SFTPReadForEdit loads a remote text file for the built-in editor.
+func (a *App) SFTPReadForEdit(id, path string) (connection.EditFile, error) {
+	return a.connMgr.ReadForEdit(id, path)
+}
+
+// SFTPWriteEdited saves the editor's content. version is the one returned by
+// SFTPReadForEdit; a changed file is refused unless force is set.
+func (a *App) SFTPWriteEdited(id, path, content, version string, force bool) (string, error) {
+	if a.sec.lock != nil && a.sec.lock.Locked() {
+		return "", connection.ErrLocked
+	}
+	return a.connMgr.WriteEdited(id, path, content, version, force)
+}
+
+// StreamConnect opens a Telnet or serial session. It shows up in the UI like
+// an SSH tab (same events), but has no SFTP, tunnels or host monitor.
+func (a *App) StreamConnect(req connection.StreamRequest) error {
+	if a.sec.lock != nil && a.sec.lock.Locked() {
+		return connection.ErrLocked
+	}
+	return a.connMgr.ConnectStream(req)
+}
+
+// SerialPorts lists the serial devices on this machine.
+func (a *App) SerialPorts() ([]string, error) {
+	return a.connMgr.SerialPorts()
+}
+
+// ListContainers lists running Docker/Podman containers or Kubernetes pods
+// on the server of an SSH connection.
+func (a *App) ListContainers(id, runtime string) ([]connection.Container, error) {
+	return a.connMgr.ListContainers(id, runtime)
+}
+
 // HostStats reads CPU, memory, disk, load and network of a Linux server
 // over a separate SSH exec channel.
 func (a *App) HostStats(id string) (connection.HostStats, error) {

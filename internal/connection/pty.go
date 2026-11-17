@@ -83,45 +83,8 @@ func NewPTYSession(client *ssh.Client, emitter EventEmitter, connID string, cols
 
 	p := &PTYSession{session: session, stdin: stdin, done: make(chan struct{})}
 
-	// send emits through the lock gate, so output produced while the app is
-	// locked is queued (in order) instead of reaching the webview.
-	send := func(event string, payload ...interface{}) {
-		if opts.gate == nil {
-			emitter.Emit(event, payload...)
-			return
-		}
-		size := 0
-		if len(payload) > 0 {
-			if s, ok := payload[0].(string); ok {
-				size = len(s)
-			}
-		}
-		opts.gate.Send(connID, size, func() { emitter.Emit(event, payload...) })
-	}
-
-	var emitMu sync.Mutex
-	raw := func(s string) {
-		// Record what the terminal shows (after masking), not what the server sent.
-		if opts.recorder != nil {
-			if r := opts.recorder(); r != nil {
-				r.Output(s)
-			}
-		}
-		send("terminal:output:"+connID, s)
-	}
-	var masker *OutputMasker
-	if opts.mask != nil {
-		masker = NewOutputMasker(opts.mask, raw)
-	}
-	emit := func(s string) {
-		if masker != nil {
-			masker.Write(s) // serialized by the masker's own lock
-			return
-		}
-		emitMu.Lock()
-		raw(s)
-		emitMu.Unlock()
-	}
+	pipe := newOutputPipe(emitter, connID, opts)
+	send, emit := pipe.send, pipe.emit
 
 	var wg sync.WaitGroup
 	wg.Add(2)
@@ -131,9 +94,7 @@ func NewPTYSession(client *ssh.Client, emitter EventEmitter, connID string, cols
 	go func() {
 		_ = session.Wait()
 		wg.Wait()
-		if masker != nil {
-			masker.Flush()
-		}
+		pipe.flush()
 		close(p.done)
 		send("terminal:closed:" + connID)
 		if onExit != nil {

@@ -4,6 +4,7 @@ import { ArrowDownToLine, ArrowUpFromLine, FolderTree, Laptop, Server, X } from 
 import { FilePane, PARENT, formatSize, paneRows } from './FilePane';
 import type { PaneState } from './FilePane';
 import { Modal, errorText, useDialogs } from '../ui/Dialogs';
+import { RemoteEditor } from './RemoteEditor';
 import type { ActivePane, FileEntry, TransferProgress } from '../../types';
 import { EventsOn } from '../../../wailsjs/runtime/runtime';
 import { isOsFileDrag, onOsFileDrop } from '../../lib/fileDrop';
@@ -81,6 +82,7 @@ export function SftpPanel({ connectionId, visible, onClose }: SftpPanelProps) {
   const [active, setActive] = useState<ActivePane>('remote');
   const [transfer, setTransfer] = useState<TransferProgress | null>(null);
   const [viewer, setViewer] = useState<{ title: string; content: string } | null>(null);
+  const [editing, setEditing] = useState<string | null>(null);
   const [height, setHeight] = useState(initialHeight);
   const jobRef = useRef<string | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -448,7 +450,7 @@ export function SftpPanel({ connectionId, visible, onClose }: SftpPanelProps) {
   };
 
   const onKeyDown = (e: ReactKeyboardEvent) => {
-    if (viewer) return;
+    if (viewer || editing) return;
     const cur = rows[pane.cursor];
     const mod = e.ctrlKey || e.metaKey;
     const handled = () => {
@@ -472,6 +474,11 @@ export function SftpPanel({ connectionId, visible, onClose }: SftpPanelProps) {
         if (cur) toggleSelect(active, cur);
         return moveCursor(1);
       case 'F3': handled(); if (cur) void view(active, cur); return;
+      case 'F4':
+        handled();
+        if (active !== 'remote') dialogs.toast('F4 edits files on the server. Local files open in your own editor.', 'info');
+        else if (cur && !cur.isDir && cur.name !== PARENT) setEditing(cur.path);
+        return;
       case 'F5': handled(); void runTransfer(false); return;
       case 'F6': handled(); if (e.shiftKey) void rename(); else void runTransfer(true); return;
       case 'F2': handled(); void rename(); return;
@@ -515,6 +522,7 @@ export function SftpPanel({ connectionId, visible, onClose }: SftpPanelProps) {
 
   const hints: [string, string][] = [
     ['F3', 'View'],
+    ['F4', 'Edit'],
     ['F5', 'Copy'],
     ['F6', 'Move'],
     ['F7', 'New folder'],
@@ -616,6 +624,18 @@ export function SftpPanel({ connectionId, visible, onClose }: SftpPanelProps) {
             Cancel
           </button>
         </div>
+      )}
+
+      {editing && (
+        <RemoteEditor
+          connectionId={connectionId}
+          path={editing}
+          onClose={() => {
+            setEditing(null);
+            rootRef.current?.focus();
+            void loadRemote(remote.path);
+          }}
+        />
       )}
 
       {viewer && (

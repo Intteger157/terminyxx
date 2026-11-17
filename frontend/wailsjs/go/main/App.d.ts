@@ -47,6 +47,8 @@ export function IsRecording(arg1:string):Promise<boolean>;
 
 export function LaunchRDP(arg1:string):Promise<void>;
 
+export function ListContainers(arg1:string,arg2:string):Promise<Array<connection.Container>>;
+
 export function ListFolders():Promise<Array<store.Folder>>;
 
 export function ListImportSources():Promise<Array<importers.SourceInfo>>;
@@ -97,11 +99,15 @@ export function SFTPMkdir(arg1:string,arg2:string):Promise<void>;
 
 export function SFTPReadFile(arg1:string,arg2:string):Promise<string>;
 
+export function SFTPReadForEdit(arg1:string,arg2:string):Promise<connection.EditFile>;
+
 export function SFTPRemove(arg1:string,arg2:string):Promise<void>;
 
 export function SFTPRename(arg1:string,arg2:string,arg3:string):Promise<void>;
 
 export function SFTPTransfer(arg1:string,arg2:connection.TransferRequest):Promise<void>;
+
+export function SFTPWriteEdited(arg1:string,arg2:string,arg3:string,arg4:string,arg5:boolean):Promise<string>;
 
 export function SSHConnect(arg1:connection.ConnectRequest):Promise<void>;
 
@@ -129,6 +135,8 @@ export function SelectFolder():Promise<string>;
 
 export function SelectKeyFile():Promise<string>;
 
+export function SerialPorts():Promise<Array<string>>;
+
 export function SetCaptureProtection(arg1:boolean):Promise<void>;
 
 export function SetMasterPassword(arg1:string,arg2:string):Promise<void>;
@@ -140,6 +148,8 @@ export function StartTunnel(arg1:string,arg2:connection.TunnelSpec):Promise<conn
 export function StopRecording(arg1:string):Promise<void>;
 
 export function StopTunnel(arg1:string,arg2:string):Promise<void>;
+
+export function StreamConnect(arg1:connection.StreamRequest):Promise<void>;
 
 export function TestBiometrics():Promise<void>;
 

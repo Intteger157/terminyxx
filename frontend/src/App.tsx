@@ -18,6 +18,11 @@ import { contains, insertPane, neighbor, paneIds, removePane, setSizes as setSpl
 import type { Side, TabGroup } from './lib/layout';
 import { setBroadcastPanes, toggleBroadcast, useBroadcast } from './lib/broadcast';
 import { SnippetsDialog } from './components/snippets/SnippetsDialog';
+import { StreamDialog } from './components/terminal/StreamDialog';
+import { ContainersDialog } from './components/terminal/ContainersDialog';
+import { setInitialInput } from './lib/initialInput';
+import { StreamConnect } from '../wailsjs/go/main/App';
+import { connection } from '../wailsjs/go/models';
 import { RecordingsDialog } from './components/recordings/RecordingsDialog';
 import type { PaneDrag } from './lib/paneDrag';
 import { ConnectDialog } from './components/terminal/ConnectDialog';
@@ -35,7 +40,7 @@ import { setClipboardNotifier } from './lib/clipboard';
 import { getSettings, updateSecurity, useSettings } from './lib/settings';
 import { modKey, usePlatform } from './lib/hosts';
 import type { QuickTarget } from './lib/hosts';
-import type { RDPProfile, SSHProfile, TerminalTab } from './types';
+import type { RDPProfile, SSHProfile, StreamSpec, TerminalTab } from './types';
 import { EventsOn } from '../wailsjs/runtime/runtime';
 import { LaunchRDP, SaveRDPProfile, SaveSSHProfile, SSHDisconnect } from '../wailsjs/go/main/App';
 
@@ -72,6 +77,8 @@ function App() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [snippetsOpen, setSnippetsOpen] = useState(false);
   const [recordingsOpen, setRecordingsOpen] = useState(false);
+  const [streamDialog, setStreamDialog] = useState<'telnet' | 'serial' | null>(null);
+  const [containersFor, setContainersFor] = useState<string | null>(null);
   const broadcast = useBroadcast();
   const [settingsOpen, setSettingsOpen] = useState<SettingsSection | null>(null);
   const [sidebar, setSidebar] = useState<SidebarPref>(readSidebarPref);
@@ -307,8 +314,33 @@ function App() {
     patchTab(id, { status: 'disconnected' });
   };
 
+  const streamTitle = (s: StreamSpec) => (s.kind === 'telnet' ? `telnet ${s.host}` : s.device);
+
+  const connectStream = async (tabId: string, spec: StreamSpec): Promise<boolean> => {
+    patchTab(tabId, { status: 'connecting', title: streamTitle(spec), host: spec.kind === 'telnet' ? spec.host : spec.device, stream: spec, profile: undefined });
+    try {
+      await StreamConnect(connection.StreamRequest.createFrom({ id: tabId, ...spec }));
+      patchTab(tabId, { status: 'connected', started: true });
+      return true;
+    } catch (err) {
+      setTabs((prev) => prev.map((t) => (t.id === tabId ? { ...t, status: t.started ? 'disconnected' : 'idle' } : t)));
+      dialogs.toast(`Could not connect: ${errorText(err)}`, 'error');
+      return false;
+    }
+  };
+
+  const openExec = async (tab: TerminalTab, c: connection.Container) => {
+    if (!tab.profile) return;
+    setContainersFor(null);
+    const id = newTab(c.name, tab.host, { target: tab.id, side: 'right' });
+    setInitialInput(id, c.execCommand + '\r');
+    const ok = await connectTab(id, tab.profile);
+    if (ok) patchTab(id, { title: `${c.name} · ${tab.profile.name}` });
+  };
+
   const handleReconnect = (tab: TerminalTab) => {
-    if (tab.profile) connectTab(tab.id, tab.profile);
+    if (tab.stream) void connectStream(tab.id, tab.stream);
+    else if (tab.profile) connectTab(tab.id, tab.profile);
     else openConnectDialog(tab.id);
   };
 
@@ -456,7 +488,7 @@ function App() {
   };
 
   const toggleSftp = () => {
-    if (activeTab?.status !== 'connected') return;
+    if (activeTab?.status !== 'connected' || activeTab.stream) return;
     setSftpOpenFor((s) => ({ ...s, [activeTab.id]: !s[activeTab.id] }));
   };
 
@@ -529,6 +561,11 @@ function App() {
     { id: 'mask', group: 'Actions', label: masking ? 'Stop masking secrets' : 'Mask secrets in terminal output', icon: <EyeOff size={14} />, keywords: 'presentation streamer mode hide password token redact', shortcut: [mod, '⇧', 'M'], run: toggleMasking },
     { id: 'trusted', group: 'Actions', label: 'Trusted hosts (known_hosts)', icon: <ShieldCheck size={14} />, keywords: 'host key fingerprint known_hosts revoke', run: () => setSettingsOpen('security') },
     { id: 'sync', group: 'Actions', label: 'Encrypted sync file (export / import hosts)', icon: <Settings size={14} />, keywords: 'backup restore transfer migrate cloud dropbox', run: () => setSettingsOpen('sync') },
+    { id: 'telnet', group: 'Actions', label: 'New Telnet connection', icon: <Plus size={14} />, keywords: 'router switch network device', run: () => setStreamDialog('telnet') },
+    { id: 'serial', group: 'Actions', label: 'New serial port connection', icon: <Plus size={14} />, keywords: 'com uart console usb tty baud', run: () => setStreamDialog('serial') },
+    ...(activeTab?.status === 'connected' && activeTab.profile
+      ? [{ id: 'containers', group: 'Actions', label: 'Containers (Docker, Podman, Kubernetes)', icon: <SquareTerminal size={14} />, keywords: 'docker exec shell pod kubectl podman', run: () => setContainersFor(activeTab.id) } as PaletteItem]
+      : []),
     { id: 'recordings', group: 'Actions', label: 'Session recordings', icon: <Circle size={14} />, keywords: 'record replay playback history log search asciinema', run: () => setRecordingsOpen(true) },
     { id: 'snippets', group: 'Actions', label: 'Snippets', icon: <ScrollText size={14} />, keywords: 'commands macros saved scripts run', shortcut: [mod, '⇧', 'S'], run: () => setSnippetsOpen(true) },
     ...(isSplit
@@ -675,6 +712,7 @@ function App() {
         onLock={() => void lockApp()}
         onOpenSnippets={() => setSnippetsOpen(true)}
         onOpenRecordings={() => setRecordingsOpen(true)}
+        onOpenContainers={() => activeTab && setContainersFor(activeTab.id)}
         broadcast={broadcast}
         onToggleBroadcast={toggleBroadcast}
       />
@@ -692,6 +730,23 @@ function App() {
           onConnect={handleDialogConnect}
         />
       )}
+
+      {streamDialog && (
+        <StreamDialog
+          initial={streamDialog}
+          onClose={() => setStreamDialog(null)}
+          onConnect={(spec) => {
+            setStreamDialog(null);
+            const id = newTab(streamTitle(spec), spec.kind === 'telnet' ? spec.host : spec.device);
+            void connectStream(id, spec);
+          }}
+        />
+      )}
+
+      {(() => {
+        const t = tabs.find((x) => x.id === containersFor);
+        return t ? <ContainersDialog tab={t} onClose={() => setContainersFor(null)} onOpen={(c) => void openExec(t, c)} /> : null;
+      })()}
 
       {recordingsOpen && <RecordingsDialog onClose={() => setRecordingsOpen(false)} />}
 

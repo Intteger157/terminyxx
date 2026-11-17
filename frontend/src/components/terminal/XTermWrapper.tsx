@@ -8,6 +8,7 @@ import { useContextMenu } from '../ui/ContextMenu';
 import type { MenuEntry } from '../ui/ContextMenu';
 import { BrowserOpenURL, EventsOn } from '../../../wailsjs/runtime/runtime';
 import { inputTargets } from '../../lib/broadcast';
+import { takeInitialInput } from '../../lib/initialInput';
 import { SSHResizePTY, SSHStartShell, SSHWriteInput } from '../../../wailsjs/go/main/App';
 import { fontStack, getSettings, subscribeSettings } from '../../lib/settings';
 import type { AppSettings } from '../../lib/settings';
@@ -268,9 +269,15 @@ export function XTermWrapper({ connectionId, visible, focused, connected, menuEx
       term.write('\r\n\x1b[2m── reconnected ──\x1b[0m\r\n');
     }
     startedOnce.current = true;
-    SSHStartShell(connectionId, term.cols, term.rows).catch((err) => {
-      term.write(`\r\n\x1b[31mFailed to start shell: ${err}\x1b[0m\r\n`);
-    });
+    SSHStartShell(connectionId, term.cols, term.rows)
+      .then(() => {
+        // e.g. `docker exec` for a pane opened from the container picker
+        const first = takeInitialInput(connectionId);
+        if (first) SSHWriteInput(connectionId, first).catch(() => {});
+      })
+      .catch((err) => {
+        term.write(`\r\n\x1b[31mFailed to start shell: ${err}\x1b[0m\r\n`);
+      });
   }, [connected, connectionId]);
 
   useEffect(() => {

@@ -429,6 +429,7 @@ function ShortcutsSection({ modKey }: { modKey: string }) {
       title: 'SFTP panel',
       items: [
         ['View file', ['F3']],
+        ['Edit remote file', ['F4']],
         ['Copy to other pane', ['F5']],
         ['Move to other pane', ['F6']],
         ['Rename', ['⇧', 'F6']],

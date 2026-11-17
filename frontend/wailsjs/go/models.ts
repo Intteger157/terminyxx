@@ -79,6 +79,46 @@ export namespace connection {
 		    return a;
 		}
 	}
+	export class Container {
+	    runtime: string;
+	    id: string;
+	    name: string;
+	    namespace: string;
+	    image: string;
+	    status: string;
+	    execCommand: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Container(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.runtime = source["runtime"];
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.namespace = source["namespace"];
+	        this.image = source["image"];
+	        this.status = source["status"];
+	        this.execCommand = source["execCommand"];
+	    }
+	}
+	export class EditFile {
+	    content: string;
+	    version: string;
+	    mode: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new EditFile(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.content = source["content"];
+	        this.version = source["version"];
+	        this.mode = source["mode"];
+	    }
+	}
 	export class FileEntry {
 	    name: string;
 	    path: string;
@@ -139,6 +179,34 @@ export namespace connection {
 	        this.uptimeSec = source["uptimeSec"];
 	        this.rxPerSec = source["rxPerSec"];
 	        this.txPerSec = source["txPerSec"];
+	    }
+	}
+	export class StreamRequest {
+	    id: string;
+	    kind: string;
+	    host: string;
+	    port: number;
+	    device: string;
+	    baud: number;
+	    dataBits: number;
+	    parity: string;
+	    stopBits: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new StreamRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.kind = source["kind"];
+	        this.host = source["host"];
+	        this.port = source["port"];
+	        this.device = source["device"];
+	        this.baud = source["baud"];
+	        this.dataBits = source["dataBits"];
+	        this.parity = source["parity"];
+	        this.stopBits = source["stopBits"];
 	    }
 	}
 	export class TransferRequest {
