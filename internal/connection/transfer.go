@@ -9,6 +9,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -225,10 +226,9 @@ func (b *SFTPBridge) planDownload(req TransferRequest) ([]transferItem, error) {
 				}
 				info = target
 			}
-			rel := p[len(src):]
-			dst := root
-			if rel != "" {
-				dst = filepath.Join(root, filepath.FromSlash(rel))
+			dst, err := downloadTarget(root, src, p)
+			if err != nil {
+				return nil, err
 			}
 			items = append(items, transferItem{
 				src: p, dst: dst, size: info.Size(), isDir: info.IsDir(),
@@ -237,6 +237,29 @@ func (b *SFTPBridge) planDownload(req TransferRequest) ([]transferItem, error) {
 		}
 	}
 	return items, nil
+}
+
+// downloadTarget maps remote path p (found while walking src) to a local
+// path under root. Names come from the server, which could send "../x" or,
+// for Windows, "..\x"; anything that would land outside root is refused.
+func downloadTarget(root, src, p string) (string, error) {
+	var rel string
+	switch {
+	case p == src:
+		return root, nil
+	case src == "/" && strings.HasPrefix(p, "/"):
+		rel = p[1:]
+	case strings.HasPrefix(p, src+"/"):
+		rel = p[len(src)+1:]
+	default:
+		return "", fmt.Errorf("server returned a path outside %s: %q", src, p)
+	}
+	dst := filepath.Join(root, filepath.FromSlash(rel))
+	r, err := filepath.Rel(root, dst)
+	if err != nil || r == "." || r == ".." || strings.HasPrefix(r, ".."+string(filepath.Separator)) || filepath.IsAbs(r) {
+		return "", fmt.Errorf("refusing unsafe file name from server: %q", rel)
+	}
+	return dst, nil
 }
 
 func (b *SFTPBridge) uploadFile(ctx context.Context, it transferItem, t *progressTracker) error {
