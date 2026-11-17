@@ -12,6 +12,7 @@ import { compileRule } from '../../lib/highlight';
 import { SecuritySection } from './SecuritySection';
 import { BrowserOpenURL } from '../../../wailsjs/runtime/runtime';
 import { checkForUpdate, useUpdates } from '../../lib/updates';
+import { parseReleaseNotes } from '../../lib/releaseNotes';
 
 export type SettingsSection = 'appearance' | 'terminal' | 'highlight' | 'security' | 'shortcuts' | 'about';
 
@@ -464,6 +465,7 @@ function ShortcutsSection({ modKey }: { modKey: string }) {
 function AboutSection({ settings }: { settings: AppSettings }) {
   const u = useUpdates();
   const r = u.result;
+  const notes = r?.notes ? parseReleaseNotes(r.notes) : [];
   return (
     <div className="space-y-6">
       <Section title="Terminyxx">
@@ -489,7 +491,19 @@ function AboutSection({ settings }: { settings: AppSettings }) {
         {r && r.available && (
           <div className="mt-3 rounded-lg border border-accent/30 bg-accent/10 p-3">
             <div className="text-[13px] text-gray-100">Version {r.latest} is available</div>
-            {r.notes && <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap font-sans text-2xs text-gray-400">{r.notes}</pre>}
+            {notes.length > 0 && (
+              <div className="mt-2 max-h-40 overflow-auto space-y-1 text-2xs text-gray-400">
+                {notes.map((l, i) =>
+                  l.kind === 'heading' ? (
+                    <div key={i} className="pt-1 font-semibold text-gray-300">{l.text}</div>
+                  ) : l.kind === 'bullet' ? (
+                    <div key={i} className="flex gap-1.5"><span>•</span><span>{l.text}</span></div>
+                  ) : (
+                    <div key={i}>{l.text}</div>
+                  ),
+                )}
+              </div>
+            )}
             <div className="mt-3 flex gap-2">
               {r.downloadUrl && (
                 <button className="btn-primary h-7 px-2.5 text-xs" onClick={() => BrowserOpenURL(r.downloadUrl)}>
