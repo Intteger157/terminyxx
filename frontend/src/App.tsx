@@ -740,6 +740,14 @@ function App() {
           folders={library.folderChoices}
           onClose={() => setConnectDialog(null)}
           onConnect={handleDialogConnect}
+          onSwitchToRdp={
+            connectDialog.tabId
+              ? undefined
+              : ({ host, folderId }) => {
+                  setConnectDialog(null);
+                  openRdpDialog({ host, folderId: folderId || undefined });
+                }
+          }
         />
       )}
 
@@ -773,7 +781,18 @@ function App() {
 
       {settingsOpen && <SettingsDialog modKey={mod} initial={settingsOpen} onClose={() => setSettingsOpen(null)} />}
 
-      {rdpDialog && <RdpDialog key={rdpDialog.key} initial={rdpDialog.initial} onClose={() => setRdpDialog(null)} onSave={handleSaveRDP} />}
+      {rdpDialog && (
+        <RdpDialog
+          key={rdpDialog.key}
+          initial={rdpDialog.initial}
+          onClose={() => setRdpDialog(null)}
+          onSave={handleSaveRDP}
+          onSwitchToSsh={({ host, folderId }) => {
+            setRdpDialog(null);
+            openConnectDialog(null, { host, folderId: folderId || undefined });
+          }}
+        />
+      )}
 
       {library.importOpen && (
         <ImportDialog

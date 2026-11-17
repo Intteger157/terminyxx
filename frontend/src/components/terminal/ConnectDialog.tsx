@@ -14,10 +14,34 @@ interface ConnectDialogProps {
   onClose: () => void;
   /** connect=false means "save only" (edit mode). */
   onConnect: (profile: SSHProfile, save: boolean, connect: boolean) => void;
+  /** Shown for a brand-new host: switches this dialog to the RDP one, carrying over what was typed. */
+  onSwitchToRdp?: (carry: { host: string; folderId: string }) => void;
+}
+
+/** SSH | RDP selector shown at the top of both "new host" dialogs. */
+export function ProtocolSwitch({ value, onChange }: { value: 'ssh' | 'rdp'; onChange: (v: 'ssh' | 'rdp') => void }) {
+  return (
+    <div className="flex gap-1 p-1 rounded-lg bg-white/[0.04]" role="tablist" aria-label="Protocol">
+      {(['ssh', 'rdp'] as const).map((p) => (
+        <button
+          key={p}
+          type="button"
+          role="tab"
+          aria-selected={value === p}
+          onClick={() => value !== p && onChange(p)}
+          className={`flex-1 h-7 rounded-md text-xs font-medium transition-colors ${
+            value === p ? 'bg-accent/15 text-accent ring-1 ring-inset ring-accent/40' : 'text-gray-400 hover:text-gray-200'
+          }`}
+        >
+          {p === 'ssh' ? 'SSH / SFTP' : 'RDP'}
+        </button>
+      ))}
+    </div>
+  );
 }
 
 // Mount with a fresh `key` each time it opens so fields reset.
-export function ConnectDialog({ initial, folders, onClose, onConnect }: ConnectDialogProps) {
+export function ConnectDialog({ initial, folders, onClose, onConnect, onSwitchToRdp }: ConnectDialogProps) {
   const editing = !!initial?.id;
   const [name, setName] = useState(initial?.name ?? '');
   const [host, setHost] = useState(initial?.host ?? '');
@@ -91,6 +115,7 @@ export function ConnectDialog({ initial, folders, onClose, onConnect }: ConnectD
       onClose={onClose}
     >
       <form ref={formRef} onSubmit={handleSubmit} className="px-5 pb-5 pt-1 space-y-4">
+        {onSwitchToRdp && !editing && <ProtocolSwitch value="ssh" onChange={() => onSwitchToRdp({ host: host.trim(), folderId })} />}
         <div className="grid grid-cols-[1fr_88px] gap-2">
           <Field label="Host">
             <input
