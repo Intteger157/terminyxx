@@ -2,17 +2,19 @@
 # Rebuilds the vendored IronRDP web packages from source.
 #
 # Usage: frontend/vendor/ironrdp/build.sh [commit]   (default: the commit in README.md)
+# IRONRDP_REPO overrides the repository (default: our fork, see README.md).
 # Needs: git, node/npm, rustup and `cargo install wasm-pack --version 0.15.0 --locked`.
 # IronRDP's rust-toolchain.toml selects the Rust version; the wasm32 target is
 # added for it below.
 set -euo pipefail
 
-COMMIT="${1:-abfc97b299f04622cb7860f344a35bbea9bd4361}"
+COMMIT="${1:-79cd0600010f11bdbc879031e4008847e8176ffb}"
+REPO="${IRONRDP_REPO:-https://github.com/Intteger157/IronRDP.git}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-git clone --quiet https://github.com/Devolutions/IronRDP.git "$WORK/ironrdp"
+git clone --quiet "$REPO" "$WORK/ironrdp"
 cd "$WORK/ironrdp"
 git checkout --quiet "$COMMIT"
 rustup target add wasm32-unknown-unknown

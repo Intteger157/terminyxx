@@ -80,15 +80,33 @@ export function LockApp():Promise<boolean>;
 
 export function MoveItem(arg1:string,arg2:string,arg3:string,arg4:number):Promise<void>;
 
+export function OpenPrintsFolder():Promise<void>;
+
 export function OpenRecordingsFolder():Promise<void>;
 
 export function PickImportPaths(arg1:string):Promise<Array<string>>;
 
 export function RDPClose(arg1:string):Promise<void>;
 
+export function RDPFileClose(arg1:string,arg2:boolean):Promise<string>;
+
+export function RDPFileCreate(arg1:string,arg2:string):Promise<string>;
+
+export function RDPFileWrite(arg1:string,arg2:string):Promise<void>;
+
 export function RDPLastError(arg1:string):Promise<string>;
 
+export function RDPMakeDir(arg1:string,arg2:string):Promise<void>;
+
 export function RDPOpen(arg1:string,arg2:string,arg3:string,arg4:string):Promise<main.RDPSession>;
+
+export function RDPOpenSaveFolder(arg1:string):Promise<void>;
+
+export function RDPPickSaveFolder():Promise<string>;
+
+export function RDPPrintCreate():Promise<string>;
+
+export function RDPPrintFinish(arg1:string,arg2:boolean):Promise<string>;
 
 export function ReadImport(arg1:string,arg2:Array<string>):Promise<importers.Result>;
 

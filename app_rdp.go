@@ -23,6 +23,8 @@ type RDPSession struct {
 	Width       int    `json:"width"`
 	Height      int    `json:"height"`
 	Clipboard   bool   `json:"clipboard"`
+	// Printers adds a virtual printer whose documents open here as PDFs.
+	Printers bool `json:"printers"`
 	// Audio is the profile's audio mode: "local" plays remote sound here,
 	// "remote" leaves it on the server, "off" mutes it.
 	Audio string `json:"audio"`
@@ -82,6 +84,7 @@ func (a *App) RDPOpen(tabID, profileID, password, acceptFingerprint string) (RDP
 		Width:       p.Width,
 		Height:      p.Height,
 		Clipboard:   p.Options.Clipboard,
+		Printers:    p.Options.Printers,
 		Audio:       p.Options.Audio,
 	}, nil
 }

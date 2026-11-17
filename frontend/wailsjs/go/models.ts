@@ -419,6 +419,7 @@ export namespace main {
 	    width: number;
 	    height: number;
 	    clipboard: boolean;
+	    printers: boolean;
 	    audio: string;
 	
 	    static createFrom(source: any = {}) {
@@ -436,6 +437,7 @@ export namespace main {
 	        this.width = source["width"];
 	        this.height = source["height"];
 	        this.clipboard = source["clipboard"];
+	        this.printers = source["printers"];
 	        this.audio = source["audio"];
 	    }
 	}

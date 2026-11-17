@@ -578,11 +578,17 @@ export declare function printerDriverName(driverName: string): Extension;
 
 export declare function printerName(name: string): Extension;
 
+/** Announces these printers instead of the single printer configured above. */
+export declare function printers(list: RedirectedPrinter[]): Extension;
+
 export declare interface PrintJobStreamCallbacks {
-    onJobStart?: (fileId: number) => void;
+    /** `deviceId` is the printer the job was sent to. */
+    onJobStart?: (fileId: number, deviceId: number) => void;
     onJobData: (fileId: number, chunk: Uint8Array) => void;
     onJobComplete: (fileId: number) => void;
     onJobError?: (fileId: number) => void;
+    /** The host's answer to a printer announcement; `resultCode` is an NTSTATUS. */
+    onPrinterAnnounced?: (deviceId: number, accepted: boolean, resultCode: number) => void;
 }
 
 export declare function printJobStreamCallbacks(callbacks: PrintJobStreamCallbacks): Extension;
@@ -1097,6 +1103,20 @@ export declare interface RdpFileTransferProviderOptions {
      *   bypassing auto-detection.
      */
     storageBackend?: StorageBackendPreference | FileStorageBackend;
+}
+
+/** A printer announced with {@link printers}. */
+export declare interface RedirectedPrinter {
+    /** Queue name shown on the host (usually with "(redirected N)" added). */
+    name: string;
+    /** Driver the host uses for the queue; defaults to the same driver as `printerDriverName`. */
+    driverName?: string;
+    /** RDPDR device ID; the lowest free ID from 2 up when omitted. */
+    deviceId?: number;
+    /** At most one printer is the default; the first one when none is marked. */
+    isDefault?: boolean;
+    /** Whether the local queue is a network printer (default `true`). */
+    network?: boolean;
 }
 
 export declare function requestFileContents(params: {

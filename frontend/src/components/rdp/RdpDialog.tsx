@@ -158,7 +158,10 @@ export function RdpDialog({ initial, onClose, onSave, onSwitchToSsh }: RdpDialog
 
         <div className="border-t border-white/[0.06] pt-3 space-y-2.5">
           <span className="label">Local resources</span>
-          <Toggle checked={opts.clipboard} onChange={(v) => set('clipboard', v)} label="Clipboard" />
+          <Toggle checked={opts.clipboard} onChange={(v) => set('clipboard', v)} label={builtin ? 'Clipboard (text and files)' : 'Clipboard'} />
+          {builtin && (
+            <Toggle checked={opts.printers} onChange={(v) => set('printers', v)} label="Printer (documents open here as PDF)" />
+          )}
           {!builtin && (
             <>
               <Toggle checked={opts.printers} onChange={(v) => set('printers', v)} label="Printers" />

@@ -35,6 +35,34 @@ type HashStore interface {
 	Save(hash string) error
 }
 
+// WrapStore persists the wrapped data key ("" = none).
+type WrapStore interface {
+	LoadWrap() (string, error)
+	SaveWrap(blob string) error
+}
+
+// SecretVault is the encrypted password storage the master password guards.
+type SecretVault interface {
+	Unseal(dek []byte)
+	Seal()
+	Enable(dek []byte) error
+	Disable() error
+	SetEnabled(on bool)
+}
+
+// AttachVault ties saved-password encryption to the master password. keepKey
+// says whether the data key may stay in memory while locked (needed for
+// biometric unlock).
+func (l *Lock) AttachVault(v SecretVault, w WrapStore, keepKey func() bool) error {
+	blob, err := w.LoadWrap()
+	l.mu.Lock()
+	l.vault, l.wraps, l.keepKey = v, w, keepKey
+	l.wrap = blob
+	l.mu.Unlock()
+	v.SetEnabled(blob != "")
+	return err
+}
+
 // LockStatus is what the frontend needs to draw the lock screen.
 type LockStatus struct {
 	// Configured: a master password is set, so the app can lock.
@@ -56,6 +84,11 @@ type Lock struct {
 	now      func() time.Time
 	// onChange runs (without the lock held) after every lock/unlock.
 	onChange func(locked bool)
+
+	vault   SecretVault
+	wraps   WrapStore
+	keepKey func() bool
+	wrap    string // wrapped data key, "" until the vault is set up
 }
 
 // NewLock loads the stored hash. If a master password is set, the app
@@ -96,15 +129,63 @@ func (l *Lock) LockNow() bool {
 		return locked
 	}
 	l.locked = true
+	if l.vault != nil && (l.keepKey == nil || !l.keepKey()) {
+		l.vault.Seal()
+	}
 	l.mu.Unlock()
 	l.notify(true)
 	return true
+}
+
+// openVault loads the data key after the password was verified. A master
+// password set before saved passwords were encrypted has no key yet, so one
+// is created and the stored passwords are sealed now. Callers hold l.mu.
+func (l *Lock) openVault(password string) error {
+	if l.vault == nil {
+		return nil
+	}
+	if l.wrap != "" {
+		dek, err := unwrapDEK(password, l.wrap)
+		if err != nil {
+			return err
+		}
+		l.vault.Unseal(dek)
+		return nil
+	}
+	return l.enableVault(password)
+}
+
+// enableVault creates a data key, seals all stored passwords and saves the
+// wrapped key. Callers hold l.mu.
+func (l *Lock) enableVault(password string) error {
+	dek, err := newDEK()
+	if err != nil {
+		return err
+	}
+	blob, err := wrapDEK(password, dek)
+	if err != nil {
+		return err
+	}
+	if err := l.vault.Enable(dek); err != nil {
+		return err
+	}
+	if err := l.wraps.SaveWrap(blob); err != nil {
+		_ = l.vault.Disable()
+		return err
+	}
+	l.wrap = blob
+	l.vault.SetEnabled(true)
+	return nil
 }
 
 // Unlock verifies password and unlocks the app.
 func (l *Lock) Unlock(password string) error {
 	l.mu.Lock()
 	if err := l.checkLocked(password); err != nil {
+		l.mu.Unlock()
+		return err
+	}
+	if err := l.openVault(password); err != nil {
 		l.mu.Unlock()
 		return err
 	}
@@ -189,7 +270,16 @@ func (l *Lock) SetPassword(current, next string) error {
 			return err
 		}
 	}
+	oldWrap := l.wrap
+	if err := l.updateVault(current, next); err != nil {
+		l.mu.Unlock()
+		return err
+	}
 	if err := l.store.Save(hash); err != nil {
+		// Put the vault back the way it was.
+		if l.vault != nil {
+			l.rollbackVault(current, next, oldWrap)
+		}
 		l.mu.Unlock()
 		return err
 	}
@@ -203,6 +293,69 @@ func (l *Lock) SetPassword(current, next string) error {
 		l.notify(false)
 	}
 	return nil
+}
+
+// updateVault applies a password set / change / removal to the encrypted
+// password storage. Callers hold l.mu.
+func (l *Lock) updateVault(current, next string) error {
+	if l.vault == nil {
+		return nil
+	}
+	switch {
+	case next == "": // removal: open everything again
+		if l.wrap == "" {
+			return nil
+		}
+		dek, err := unwrapDEK(current, l.wrap)
+		if err != nil {
+			return err
+		}
+		l.vault.Unseal(dek)
+		if err := l.vault.Disable(); err != nil {
+			return err
+		}
+		if err := l.wraps.SaveWrap(""); err != nil {
+			return err
+		}
+		l.wrap = ""
+		return nil
+	case l.wrap == "": // first password (or one set before encryption existed)
+		return l.enableVault(next)
+	default: // change: only the wrapping changes, the data key stays
+		dek, err := unwrapDEK(current, l.wrap)
+		if err != nil {
+			return err
+		}
+		blob, err := wrapDEK(next, dek)
+		if err != nil {
+			return err
+		}
+		if err := l.wraps.SaveWrap(blob); err != nil {
+			return err
+		}
+		l.wrap = blob
+		l.vault.Unseal(dek)
+		return nil
+	}
+}
+
+// rollbackVault undoes updateVault after the hash could not be saved.
+func (l *Lock) rollbackVault(current, next, oldWrap string) {
+	switch {
+	case next == "" && oldWrap != "":
+		if dek, err := unwrapDEK(current, oldWrap); err == nil {
+			_ = l.vault.Enable(dek)
+			_ = l.wraps.SaveWrap(oldWrap)
+			l.wrap = oldWrap
+		}
+	case oldWrap == "":
+		_ = l.vault.Disable()
+		_ = l.wraps.SaveWrap("")
+		l.wrap = ""
+	default:
+		_ = l.wraps.SaveWrap(oldWrap)
+		l.wrap = oldWrap
+	}
 }
 
 func (l *Lock) notify(locked bool) {

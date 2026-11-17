@@ -89,14 +89,21 @@ type failingSecrets struct{ *MemorySecrets }
 
 func (*failingSecrets) Set(string, string) error { return errors.New("no keychain") }
 
-func TestPasswordFallbackWithoutKeychain(t *testing.T) {
+func TestPasswordNeverPlaintextWithoutKeychain(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "t.db"), &failingSecrets{NewMemorySecrets()})
 	must(t, err)
 	defer s.Close()
-	must(t, s.SaveSSHProfile(SSHProfile{ID: "x", Name: "x", Host: "h", Port: 22, Username: "u", AuthType: "password", Password: "pw"}))
-	if pw, _ := s.SSHPassword("x"); pw != "pw" {
-		t.Fatalf("fallback password = %q", pw)
+	err = s.SaveSSHProfile(SSHProfile{ID: "x", Name: "x", Host: "h", Port: 22, Username: "u", AuthType: "password", Password: "pw"})
+	if !errors.Is(err, ErrNoSecureStorage) {
+		t.Fatalf("want ErrNoSecureStorage, got %v", err)
 	}
+	var n int
+	must(t, s.db.QueryRow(`SELECT COUNT(*) FROM ssh_profiles WHERE password != ''`).Scan(&n))
+	if n != 0 {
+		t.Fatal("plaintext password written to database")
+	}
+	// Profiles without a password still save.
+	must(t, s.SaveSSHProfile(SSHProfile{ID: "y", Name: "y", Host: "h", Port: 22, Username: "u", AuthType: "key"}))
 }
 
 func TestPasswordKeepUpdateClear(t *testing.T) {

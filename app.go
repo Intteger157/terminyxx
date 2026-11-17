@@ -14,6 +14,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"terminyxx/internal/capture"
 	"terminyxx/internal/connection"
+	"terminyxx/internal/filesink"
 	"terminyxx/internal/importers"
 	"terminyxx/internal/rdp"
 	"terminyxx/internal/rdpgw"
@@ -35,12 +36,15 @@ type App struct {
 	ctx     context.Context
 	connMgr *connection.ConnectionManager
 	data    *store.Store
-	rdp     rdp.Launcher
+	vault   *store.Vault
+	rdp    rdp.Launcher
 	rdpgw   *rdpgw.Gateway
 	stop    chan struct{}
 	sec     securityState
+	files   *filesink.Sink
 
 	recordingsDir string
+	printsDir     string
 }
 
 func NewApp() *App {
@@ -50,11 +54,15 @@ func NewApp() *App {
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 
-	dataStore, err := store.New(store.NewOSKeyring())
+	// Saved passwords go through the vault: sealed under the master password
+	// when one is set (see initSecurity).
+	a.vault = store.NewVault(store.NewOSKeyring())
+	dataStore, err := store.New(a.vault)
 	if err != nil {
 		runtime.LogError(ctx, "failed to init store: "+err.Error())
 	} else {
 		a.data = dataStore
+		a.vault.SetKeyLister(dataStore.SecretKeys)
 	}
 
 	knownHosts := "known_hosts"
@@ -74,6 +82,11 @@ func (a *App) startup(ctx context.Context) {
 		rdpCerts = filepath.Join(dir, "rdp_known_certs")
 	}
 	a.rdpgw = rdpgw.New(rdpgw.NewTrustStore(rdpCerts))
+	a.files = filesink.New()
+	a.printsDir = "prints"
+	if dir, err := store.DataDir(); err == nil {
+		a.printsDir = filepath.Join(dir, "prints")
+	}
 
 	a.stop = make(chan struct{})
 	a.initSecurity()
@@ -117,6 +130,9 @@ func (a *App) shutdown(ctx context.Context) {
 	}
 	if a.rdpgw != nil {
 		a.rdpgw.Shutdown()
+	}
+	if a.files != nil {
+		a.files.AbortAll()
 	}
 	if a.data != nil {
 		_ = a.data.Close()

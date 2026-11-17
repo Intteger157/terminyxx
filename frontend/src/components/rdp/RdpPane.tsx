@@ -1,9 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
-import { Minimize2, Unplug } from 'lucide-react';
+import { Download, FolderOpen, Minimize2, Unplug, Upload, X } from 'lucide-react';
 import type { IronError, UserInteraction } from '@devolutions/iron-remote-desktop';
-import { RDPClose, RDPLastError } from '../../../wailsjs/go/main/App';
+import type { DroppedFile, FileInfo, RdpFileTransferProvider } from '@devolutions/iron-remote-desktop-rdp';
+import { RDPClose, RDPLastError, RDPOpenSaveFolder, RDPPickSaveFolder } from '../../../wailsjs/go/main/App';
 import type { main } from '../../../wailsjs/go/models';
 import { RdpAudioPlayer } from '../../lib/rdpAudio';
+import { DiskStorageBackend, TRANSFER_CHUNK, printSink, saveRemoteFiles } from '../../lib/rdpFiles';
+import { useDialogs } from '../ui/Dialogs';
+
+/** Fired (detail: tab id) to pick local files and copy them to that RDP session's clipboard. */
+export const RDP_SEND_FILES_EVENT = 'terminyxx:rdp-send-files';
 
 type RdpModule = typeof import('@devolutions/iron-remote-desktop-rdp');
 
@@ -53,6 +59,16 @@ async function describe(err: unknown, tabId: string, signingIn: boolean): Promis
   }
   return { text: gateway || first || 'Connection failed', auth: false };
 }
+
+/** What the file-transfer chip at the bottom of the pane shows. */
+type Transfer =
+  | { kind: 'offer'; files: FileInfo[] }
+  | { kind: 'saving'; done: number; total: number; fileName: string; percent: number }
+  | { kind: 'saved'; dir: string; count: number }
+  | { kind: 'sending'; total: number; done: number; percent: number; pulled: boolean }
+  | { kind: 'sent'; count: number };
+
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 const even = (n: number) => Math.max(200, Math.floor(n / 2) * 2);
 
@@ -105,6 +121,10 @@ export function RdpPane({
   const live = useRef(false);
   const cb = useRef({ onConnected, onEnded });
   cb.current = { onConnected, onEnded };
+  const dialogs = useDialogs();
+  const files = useRef<{ provider: RdpFileTransferProvider; backend: DiskStorageBackend } | null>(null);
+  const [transfer, setTransfer] = useState<Transfer | null>(null);
+  const [dropping, setDropping] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -139,6 +159,25 @@ export function RdpPane({
         if (cancelled) return;
         ui.current = u;
         u.setEnableClipboard(session.clipboard);
+        if (session.clipboard) {
+          // Files copied on either side travel over the clipboard channel.
+          const backend = new DiskStorageBackend();
+          const provider = new rdp.RdpFileTransferProvider({ chunkSize: TRANSFER_CHUNK, storageBackend: backend });
+          provider.on('files-available', (list) => {
+            if (!list.some((f) => !f.isDirectory)) return;
+            setTransfer((t) => (t?.kind === 'saving' || t?.kind === 'sending' ? t : { kind: 'offer', files: list }));
+          });
+          provider.on('error', (e) => {
+            if (cancelled) return;
+            const what = e.direction === 'upload' ? 'Copying to the remote desktop' : 'Saving';
+            dialogs.toast(`${what} failed: ${e.message}`, 'error');
+            if (e.direction === 'upload') setTransfer((t) => (t?.kind === 'sending' ? null : t));
+          });
+          // The typings declare the upload hooks private; the component sets them to
+          // pause its clipboard polling while an upload is on the remote clipboard.
+          u.enableFileTransfer(provider as unknown as Parameters<UserInteraction['enableFileTransfer']>[0]);
+          files.current = { provider, backend };
+        }
 
         const rect = container.getBoundingClientRect();
         const fitPane = dynamicResolution || !session.width || !session.height;
@@ -157,6 +196,17 @@ export function RdpPane({
           .withExtension(rdp.displayControl(true));
         if (fitPane && percent > 100) builder.withExtension(rdp.desktopScaleFactor(percent));
         if (audio) builder.withExtension(rdp.audioPlayback(audio.onMessage));
+        if (session.printers) {
+          // The PDF driver makes every job a ready PDF that opens in the local viewer.
+          const sink = printSink(
+            () => dialogs.toast('The printed document opened in your PDF viewer', 'success'),
+            (msg) => dialogs.toast(`Printing failed: ${msg}`, 'error')
+          );
+          builder
+            .withExtension(rdp.printerName('Terminyxx'))
+            .withExtension(rdp.printerDriverName(rdp.PrinterDriverName.MicrosoftPrintToPdf))
+            .withExtension(rdp.printJobStreamCallbacks(sink));
+        }
         const config = builder.build();
 
         const info = await u.connect(config);
@@ -192,6 +242,7 @@ export function RdpPane({
         // already ended
       }
       RDPClose(tabId).catch(() => {});
+      files.current = null;
       element.current?.remove();
       element.current = null;
       ui.current = null;
@@ -232,8 +283,107 @@ export function RdpPane({
     if ((visible && focused) || fullscreen) element.current?.focus();
   }, [visible, focused, fullscreen]);
 
+  const refocus = () => element.current?.focus();
+
+  /** Puts local files on the remote clipboard; the user pastes them there. */
+  const send = (list: File[] | DroppedFile[]) => {
+    const f = files.current;
+    if (!f || !live.current) return;
+    const total = (list as Array<File | DroppedFile>).filter((x) => !('isDirectory' in x && x.isDirectory)).length;
+    if (total === 0) return;
+    if (f.provider.isUploadInProgress()) {
+      dialogs.toast('Wait until the previous files are pasted on the remote desktop', 'info');
+      return;
+    }
+    let done = 0;
+    const onProgress = (p: { percentage: number }) =>
+      setTransfer((t) => (t?.kind === 'sending' ? { ...t, pulled: true, percent: p.percentage } : t));
+    const onComplete = () => {
+      done++;
+      setTransfer((t) => (t?.kind === 'sending' ? { ...t, pulled: true, done, percent: 0 } : t));
+    };
+    f.provider.on('upload-progress', onProgress);
+    f.provider.on('upload-complete', onComplete);
+    setTransfer({ kind: 'sending', total, done: 0, percent: 0, pulled: false });
+    const { completion } = f.provider.uploadFiles(list);
+    completion
+      .then(() => setTransfer((t) => (t?.kind === 'sending' ? { kind: 'sent', count: total } : t)))
+      .catch(() => setTransfer((t) => (t?.kind === 'sending' ? null : t)))
+      .finally(() => {
+        f.provider.off('upload-progress', onProgress);
+        f.provider.off('upload-complete', onComplete);
+      });
+    refocus();
+  };
+
+  /** Saves files copied on the remote desktop into a folder the user picks. */
+  const save = async (list: FileInfo[]) => {
+    const f = files.current;
+    if (!f) return;
+    const dir = await RDPPickSaveFolder().catch((e) => {
+      dialogs.toast(String(e), 'error');
+      return '';
+    });
+    refocus();
+    if (!dir || files.current !== f) return;
+    const total = list.filter((x) => !x.isDirectory).length;
+    setTransfer({ kind: 'saving', done: 0, total, fileName: '', percent: 0 });
+    try {
+      const count = await saveRemoteFiles(f.provider, f.backend, list, dir, (p) => setTransfer({ kind: 'saving', ...p }));
+      setTransfer({ kind: 'saved', dir, count });
+    } catch (e) {
+      setTransfer(null);
+      dialogs.toast(`Saving failed: ${e instanceof Error ? e.message : String(e)}`, 'error');
+    }
+  };
+
+  // "Send files" from the status bar or the full-screen bar. The file
+  // picker must open within the click, so the event is handled synchronously.
+  const pick = useRef<() => void>(() => {});
+  pick.current = () => {
+    if (!files.current || !live.current) return;
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.multiple = true;
+    input.onchange = () => send(Array.from(input.files ?? []));
+    input.click();
+  };
+  useEffect(() => {
+    const onSend = (e: Event) => {
+      if ((e as CustomEvent<string>).detail === tabId) pick.current();
+    };
+    window.addEventListener(RDP_SEND_FILES_EVENT, onSend);
+    return () => window.removeEventListener(RDP_SEND_FILES_EVENT, onSend);
+  }, [tabId]);
+
+  // Finished states and unanswered offers go away on their own.
+  useEffect(() => {
+    if (!transfer || transfer.kind === 'saving' || transfer.kind === 'sending') return;
+    const t = window.setTimeout(() => setTransfer(null), transfer.kind === 'offer' ? 30000 : 8000);
+    return () => window.clearTimeout(t);
+  }, [transfer]);
+
+  const isFileDrag = (e: React.DragEvent) => !!files.current && live.current && e.dataTransfer.types.includes('Files');
+
   return (
-    <div ref={host} className={`${fullscreen ? 'fixed z-[55]' : 'absolute'} inset-0 bg-black overflow-hidden`}>
+    <div
+      ref={host}
+      className={`${fullscreen ? 'fixed z-[55]' : 'absolute'} inset-0 bg-black overflow-hidden`}
+      onDragOver={(e) => {
+        if (!isFileDrag(e)) return;
+        files.current!.provider.handleDragOver(e.nativeEvent);
+        setDropping(true);
+      }}
+      onDragLeave={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDropping(false);
+      }}
+      onDrop={(e) => {
+        setDropping(false);
+        if (!isFileDrag(e)) return;
+        e.preventDefault();
+        files.current!.provider.handleDrop(e.nativeEvent).then(send, (err) => dialogs.toast(String(err), 'error'));
+      }}
+    >
       {fullscreen && (
         <FullscreenBar
           title={title}
@@ -241,7 +391,27 @@ export function RdpPane({
             onExitFullscreen?.();
           }}
           onDisconnect={() => onDisconnect?.()}
-          refocus={() => element.current?.focus()}
+          onSendFiles={session.clipboard ? () => pick.current() : undefined}
+          refocus={refocus}
+        />
+      )}
+      {dropping && (
+        <div className="absolute inset-3 z-20 rounded-xl border-2 border-dashed border-accent/70 bg-accent/10 flex items-center justify-center pointer-events-none">
+          <span className="px-3 py-1.5 rounded-lg bg-surface-raised/95 text-sm text-gray-200 shadow-pop">Drop to copy to the remote clipboard</span>
+        </div>
+      )}
+      {transfer && (
+        <TransferChip
+          transfer={transfer}
+          onSave={(list) => void save(list)}
+          onOpenFolder={(dir) => {
+            RDPOpenSaveFolder(dir).catch((e) => dialogs.toast(String(e), 'error'));
+            setTransfer(null);
+          }}
+          onClose={() => {
+            setTransfer(null);
+            refocus();
+          }}
         />
       )}
     </div>
@@ -257,11 +427,13 @@ function FullscreenBar({
   title,
   onExit,
   onDisconnect,
+  onSendFiles,
   refocus,
 }: {
   title: string;
   onExit: () => void;
   onDisconnect: () => void;
+  onSendFiles?: () => void;
   refocus: () => void;
 }) {
   const [shown, setShown] = useState(true);
@@ -301,10 +473,88 @@ function FullscreenBar({
         >
           <Minimize2 size={13} /> Exit full screen
         </button>
+        {onSendFiles && (
+          <button className="icon-btn w-7 h-7" title="Copy files to the remote clipboard" onClick={onSendFiles}>
+            <Upload size={14} />
+          </button>
+        )}
         <button className="icon-btn w-7 h-7 text-red-300 hover:text-red-200" title="Disconnect" onClick={onDisconnect}>
           <Unplug size={14} />
         </button>
       </div>
     </>
+  );
+}
+
+/** The file-transfer status at the bottom right of the pane. */
+function TransferChip({
+  transfer: t,
+  onSave,
+  onOpenFolder,
+  onClose,
+}: {
+  transfer: Transfer;
+  onSave: (files: FileInfo[]) => void;
+  onOpenFolder: (dir: string) => void;
+  onClose: () => void;
+}) {
+  const busy = t.kind === 'saving' || t.kind === 'sending';
+  let text = '';
+  let percent: number | null = null;
+  switch (t.kind) {
+    case 'offer': {
+      const list = t.files.filter((f) => !f.isDirectory);
+      text = list.length === 1 ? `Copied on the remote: ${list[0].name}` : `${plural(list.length, 'file')} copied on the remote`;
+      break;
+    }
+    case 'saving':
+      text = t.total > 1 ? `Saving ${Math.min(t.done + 1, t.total)} of ${t.total}: ${t.fileName}` : `Saving ${t.fileName}`;
+      percent = t.percent;
+      break;
+    case 'saved':
+      text = `Saved ${plural(t.count, 'file')}`;
+      break;
+    case 'sending':
+      if (t.pulled) {
+        text = t.total > 1 ? `Copying ${Math.min(t.done + 1, t.total)} of ${t.total} to the remote` : 'Copying to the remote';
+        percent = t.percent;
+      } else {
+        text = `${plural(t.total, 'file')} on the remote clipboard: paste with Ctrl+V on the remote desktop`;
+      }
+      break;
+    case 'sent':
+      text = `Copied ${plural(t.count, 'file')} to the remote`;
+      break;
+  }
+  const Icon = t.kind === 'sending' || t.kind === 'sent' ? Upload : Download;
+  return (
+    <div className="absolute bottom-3 right-3 z-20 max-w-[min(480px,calc(100%-24px))] flex items-center gap-2 pl-3 pr-1.5 py-1.5 rounded-xl bg-surface-raised/95 backdrop-blur-xl shadow-pop ring-1 ring-white/[0.06] text-[12px] text-gray-300">
+      <Icon size={13} className="shrink-0 text-accent" />
+      <div className="min-w-0 flex-1">
+        <div className="truncate" title={text}>
+          {text}
+        </div>
+        {percent !== null && (
+          <div className="mt-1 h-1 rounded-full bg-white/[0.08] overflow-hidden">
+            <div className="h-full bg-accent transition-[width] duration-200" style={{ width: `${Math.round(percent)}%` }} />
+          </div>
+        )}
+      </div>
+      {t.kind === 'offer' && (
+        <button className="btn-secondary h-7 px-2.5 text-xs shrink-0" onClick={() => onSave(t.files)}>
+          Save to…
+        </button>
+      )}
+      {t.kind === 'saved' && (
+        <button className="btn-secondary h-7 px-2.5 text-xs shrink-0" onClick={() => onOpenFolder(t.dir)}>
+          <FolderOpen size={13} /> Show
+        </button>
+      )}
+      {!busy && (
+        <button className="icon-btn w-7 h-7 shrink-0" title="Dismiss" onClick={onClose}>
+          <X size={13} />
+        </button>
+      )}
+    </div>
   );
 }

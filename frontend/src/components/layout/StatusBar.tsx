@@ -1,10 +1,11 @@
-import { ArrowUpCircle, Box, Copy, EyeOff, ScrollText, FolderTree, Lock, Maximize2, Plug, RotateCw, ShieldAlert, ShieldCheck, Unplug } from 'lucide-react';
+import { ArrowUpCircle, Box, Copy, EyeOff, ScrollText, FolderTree, Lock, Maximize2, Plug, RotateCw, ShieldAlert, ShieldCheck, Unplug, Upload } from 'lucide-react';
 import { showCaptureNotice, useCaptureProtection } from '../../lib/captureProtection';
 import { useUpdates } from '../../lib/updates';
 import type { TerminalTab } from '../../types';
 import { TunnelsPopover } from '../terminal/TunnelsPopover';
 import { RecordButton } from '../recordings/RecordButton';
 import { HostMonitor } from './HostMonitor';
+import { RDP_SEND_FILES_EVENT } from '../rdp/RdpPane';
 
 interface StatusBarProps {
   tab: TerminalTab | null;
@@ -82,6 +83,16 @@ export function StatusBar({ tab, size, sftpOpen, openTabs, onToggleSftp, onDisco
           {status === 'connected' && tab.rdp && (
             <button className="btn-ghost h-5 px-1.5 text-2xs" onClick={onRdpFullscreen} title="Full screen (Ctrl+Alt+Enter)">
               <Maximize2 size={11} /> Full screen
+            </button>
+          )}
+          {status === 'connected' && tab.rdp && tab.rdpSession?.clipboard && (
+            <button
+              className="btn-ghost h-5 px-1.5 text-2xs"
+              // The pane opens the file picker synchronously, within this click.
+              onClick={() => window.dispatchEvent(new CustomEvent(RDP_SEND_FILES_EVENT, { detail: tab.id }))}
+              title="Copy local files to the remote clipboard (or drop them on the remote desktop), then paste them there"
+            >
+              <Upload size={11} /> Send files
             </button>
           )}
           {(status === 'disconnected' || status === 'idle') && (

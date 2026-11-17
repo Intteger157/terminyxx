@@ -10,7 +10,7 @@
     "Alexandr Yusuk"
   ],
   "description": "Backend-agnostic Web Component for remote desktop protocols",
-  "version": "0.11.0-ironrdp.abfc97b",
+  "version": "0.11.0-ironrdp.79cd060",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Devolutions/IronRDP.git"

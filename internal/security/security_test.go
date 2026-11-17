@@ -114,3 +114,82 @@ func TestFromSettingsJSON(t *testing.T) {
 		t.Fatalf("empty settings should give defaults: %+v", d)
 	}
 }
+
+type memVault struct {
+	enabled, hasKey bool
+	dek             []byte
+}
+
+func (m *memVault) Unseal(d []byte)       { m.dek, m.hasKey = d, true }
+func (m *memVault) Seal()                 { m.dek, m.hasKey = nil, false }
+func (m *memVault) Enable(d []byte) error { m.dek, m.hasKey, m.enabled = d, true, true; return nil }
+func (m *memVault) Disable() error {
+	if !m.hasKey {
+		return errors.New("locked")
+	}
+	m.enabled = false
+	return nil
+}
+func (m *memVault) SetEnabled(on bool) { m.enabled = on }
+
+type memWrap struct{ v string }
+
+func (m *memWrap) LoadWrap() (string, error) { return m.v, nil }
+func (m *memWrap) SaveWrap(b string) error   { m.v = b; return nil }
+
+func TestVaultFollowsMasterPassword(t *testing.T) {
+	hs, ws, mv := &memHash{}, &memWrap{}, &memVault{}
+	l, _ := NewLock(hs, nil)
+	if err := l.AttachVault(mv, ws, func() bool { return false }); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.SetPassword("", "correct horse"); err != nil {
+		t.Fatal(err)
+	}
+	if !mv.enabled || ws.v == "" || strings.Contains(ws.v, "correct") {
+		t.Fatalf("vault not enabled: %+v wrap=%q", mv, ws.v)
+	}
+	dek := append([]byte(nil), mv.dek...)
+
+	l.LockNow()
+	if mv.hasKey {
+		t.Fatal("key kept in memory while locked")
+	}
+	if err := l.Unlock("wrong"); err == nil || mv.hasKey {
+		t.Fatal("wrong password unsealed")
+	}
+	if err := l.Unlock("correct horse"); err != nil || string(mv.dek) != string(dek) {
+		t.Fatalf("unlock did not restore the key: %v", err)
+	}
+
+	// Changing the password keeps the data key.
+	if err := l.SetPassword("correct horse", "battery staple"); err != nil {
+		t.Fatal(err)
+	}
+	l.LockNow()
+	if err := l.Unlock("battery staple"); err != nil || string(mv.dek) != string(dek) {
+		t.Fatalf("key changed or unlock failed: %v", err)
+	}
+
+	// Removing it opens the stored passwords again.
+	if err := l.SetPassword("battery staple", ""); err != nil {
+		t.Fatal(err)
+	}
+	if mv.enabled || ws.v != "" {
+		t.Fatalf("vault still on: %+v wrap=%q", mv, ws.v)
+	}
+}
+
+func TestLegacyPasswordGetsVaultOnUnlock(t *testing.T) {
+	hs, ws, mv := &memHash{}, &memWrap{}, &memVault{}
+	l, _ := NewLock(hs, nil)
+	_ = l.SetPassword("", "correct horse") // no vault attached yet: like an older version
+	l2, _ := NewLock(hs, nil)
+	_ = l2.AttachVault(mv, ws, func() bool { return false })
+	if err := l2.Unlock("correct horse"); err != nil {
+		t.Fatal(err)
+	}
+	if !mv.enabled || ws.v == "" {
+		t.Fatal("existing master password did not enable the vault on unlock")
+	}
+}

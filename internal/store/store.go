@@ -288,12 +288,47 @@ func (s *Store) ListSSHProfiles() ([]SSHProfile, error) {
 }
 
 func (s *Store) hasSecret(id string) bool {
+	return s.hasSecretKey(sshSecretKey(id))
+}
+
+// hasSecretKey checks for an entry; a Vault answers without the data key, so
+// the lists are right even while the app is locked.
+func (s *Store) hasSecretKey(key string) bool {
 	if s.secrets == nil {
 		return false
 	}
-	_, err := s.secrets.Get(sshSecretKey(id))
+	if h, ok := s.secrets.(interface{ Has(string) bool }); ok {
+		return h.Has(key)
+	}
+	_, err := s.secrets.Get(key)
 	return err == nil
 }
+
+// SecretKeys lists the keychain keys of every profile (for re-sealing).
+func (s *Store) SecretKeys() ([]string, error) {
+	var keys []string
+	for _, q := range []struct{ sql, prefix string }{
+		{`SELECT id FROM ssh_profiles`, "ssh:"},
+		{`SELECT id FROM rdp_profiles`, "rdp:"},
+	} {
+		rows, err := s.db.Query(q.sql)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var id string
+			if rows.Scan(&id) == nil {
+				keys = append(keys, q.prefix+id)
+			}
+		}
+		rows.Close()
+	}
+	return keys, nil
+}
+
+// MoveLegacyPasswords retries moving plaintext database passwords into the
+// keychain (needed after an unlock when the vault was locked at startup).
+func (s *Store) MoveLegacyPasswords() { s.moveLegacyPasswords() }
 
 // SSHPassword returns the stored password for a profile ("" if none).
 func (s *Store) SSHPassword(id string) (string, error) {
@@ -327,11 +362,12 @@ func (s *Store) SaveSSHProfile(p SSHProfile) error {
 		return err
 	}
 
-	// The password goes to the keychain; the DB column is only a fallback.
+	// The password goes to the keychain only. If that fails the save fails:
+	// a password is never written to the database in plain text.
 	dbPassword := ""
 	if p.Password != "" {
-		if s.secrets == nil || s.secrets.Set(sshSecretKey(p.ID), p.Password) != nil {
-			dbPassword = p.Password
+		if err := s.storeSecret(sshSecretKey(p.ID), p.Password); err != nil {
+			return err
 		}
 	}
 
@@ -369,6 +405,21 @@ WHERE id=?`, p.Name, p.Host, p.Port, p.Username, p.AuthType, p.KeyPath, p.Folder
 		p.ID, p.Name, p.Host, p.Port, p.Username, p.AuthType, dbPassword, p.KeyPath, p.FolderID, sortOrder,
 		boolInt(p.AllowLegacyAlgorithms), boolInt(p.AgentForwarding), p.JumpProfileID, string(tunnelsJSON), boolInt(p.SFTPOnly))
 	return err
+}
+
+// ErrNoSecureStorage means the OS keychain refused or is missing, so the
+// password was not saved anywhere.
+var ErrNoSecureStorage = errors.New("the OS keychain is unavailable, so the password was not saved")
+
+func (s *Store) storeSecret(key, value string) error {
+	if s.secrets == nil {
+		return ErrNoSecureStorage
+	}
+	if err := s.secrets.Set(key, value); err != nil {
+		log.Printf("store: keychain write failed: %v", err)
+		return fmt.Errorf("%w (%v)", ErrNoSecureStorage, err)
+	}
+	return nil
 }
 
 func (s *Store) deleteSecret(id string) {
@@ -421,6 +472,10 @@ func scanRDP(row interface{ Scan(...any) error }) (rdp.RDPProfile, error) {
 func (s *Store) fillRDPPassword(p *rdp.RDPProfile, reveal bool) {
 	dbPassword := p.Password
 	p.Password = ""
+	if !reveal {
+		p.HasPassword = dbPassword != "" || s.hasSecretKey(rdpSecretKey(p.ID))
+		return
+	}
 	stored := ""
 	if s.secrets != nil {
 		if v, err := s.secrets.Get(rdpSecretKey(p.ID)); err == nil {
@@ -431,9 +486,7 @@ func (s *Store) fillRDPPassword(p *rdp.RDPProfile, reveal bool) {
 		stored = dbPassword
 	}
 	p.HasPassword = stored != ""
-	if reveal {
-		p.Password = stored
-	}
+	p.Password = stored
 }
 
 func (s *Store) ListRDPProfiles() ([]rdp.RDPProfile, error) {
@@ -473,13 +526,13 @@ func (s *Store) SaveRDPProfile(p rdp.RDPProfile) error {
 		return err
 	}
 
-	// A new password goes to the keychain; the DB column is only a fallback.
+	// A new password goes to the keychain only; failure fails the save.
 	dbPassword := oldPassword
 	switch {
 	case p.Password != "":
 		dbPassword = ""
-		if s.secrets == nil || s.secrets.Set(rdpSecretKey(p.ID), p.Password) != nil {
-			dbPassword = p.Password
+		if err := s.storeSecret(rdpSecretKey(p.ID), p.Password); err != nil {
+			return err
 		}
 	case p.ClearPassword:
 		dbPassword = ""

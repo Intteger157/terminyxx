@@ -39,6 +39,24 @@ func (s settingsHashStore) Save(hash string) error {
 	return s.data.SetSetting(lockHashKey, hash)
 }
 
+// lockWrapKey keeps the saved-password data key, wrapped with the master
+// password, next to the hash.
+const lockWrapKey = "lock.dek"
+
+func (s settingsHashStore) LoadWrap() (string, error) {
+	if s.data == nil {
+		return "", nil
+	}
+	return s.data.GetSetting(lockWrapKey)
+}
+
+func (s settingsHashStore) SaveWrap(blob string) error {
+	if s.data == nil {
+		return errors.New("storage unavailable")
+	}
+	return s.data.SetSetting(lockWrapKey, blob)
+}
+
 // initSecurity runs during startup, after the store and connection manager
 // exist. With a master password set, the app starts locked.
 func (a *App) initSecurity() {
@@ -53,6 +71,16 @@ func (a *App) initSecurity() {
 		runtime.LogError(a.ctx, "lock: "+err.Error())
 	}
 	a.sec.lock = lock
+	if a.vault != nil && a.data != nil {
+		hs := settingsHashStore{a.data}
+		keep := func() bool { return a.securityConfig().Lock.Biometrics }
+		if err := lock.AttachVault(a.vault, hs, keep); err != nil {
+			runtime.LogError(a.ctx, "vault: "+err.Error())
+		}
+		if !lock.Locked() {
+			a.data.MoveLegacyPasswords()
+		}
+	}
 	a.connMgr.SetLocked(lock.Locked())
 
 	a.sec.clip = security.NewClipboardGuard(
@@ -132,7 +160,13 @@ func (a *App) LockApp() bool {
 
 // UnlockApp unlocks with the master password.
 func (a *App) UnlockApp(password string) error {
-	return a.sec.lock.Unlock(password)
+	if err := a.sec.lock.Unlock(password); err != nil {
+		return err
+	}
+	if a.data != nil {
+		a.data.MoveLegacyPasswords()
+	}
+	return nil
 }
 
 // UnlockWithBiometrics shows the Touch ID / Windows Hello prompt and
@@ -143,6 +177,11 @@ func (a *App) UnlockWithBiometrics() error {
 	}
 	if !a.sec.lock.Status().Configured {
 		return security.ErrNotConfigured
+	}
+	if a.vault != nil && a.vault.Enabled() && !a.vault.HasKey() {
+		// Saved passwords are sealed under the master password, which is
+		// needed once after each start.
+		return errors.New("enter the master password once after starting the app")
 	}
 	if err := security.VerifyUser("Unlock Terminyxx", 0); err != nil {
 		return err

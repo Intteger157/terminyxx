@@ -142,6 +142,10 @@ export function MoveItem(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['MoveItem'](arg1, arg2, arg3, arg4);
 }
 
+export function OpenPrintsFolder() {
+  return window['go']['main']['App']['OpenPrintsFolder']();
+}
+
 export function OpenRecordingsFolder() {
   return window['go']['main']['App']['OpenRecordingsFolder']();
 }
@@ -154,12 +158,44 @@ export function RDPClose(arg1) {
   return window['go']['main']['App']['RDPClose'](arg1);
 }
 
+export function RDPFileClose(arg1, arg2) {
+  return window['go']['main']['App']['RDPFileClose'](arg1, arg2);
+}
+
+export function RDPFileCreate(arg1, arg2) {
+  return window['go']['main']['App']['RDPFileCreate'](arg1, arg2);
+}
+
+export function RDPFileWrite(arg1, arg2) {
+  return window['go']['main']['App']['RDPFileWrite'](arg1, arg2);
+}
+
 export function RDPLastError(arg1) {
   return window['go']['main']['App']['RDPLastError'](arg1);
 }
 
+export function RDPMakeDir(arg1, arg2) {
+  return window['go']['main']['App']['RDPMakeDir'](arg1, arg2);
+}
+
 export function RDPOpen(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['RDPOpen'](arg1, arg2, arg3, arg4);
+}
+
+export function RDPOpenSaveFolder(arg1) {
+  return window['go']['main']['App']['RDPOpenSaveFolder'](arg1);
+}
+
+export function RDPPickSaveFolder() {
+  return window['go']['main']['App']['RDPPickSaveFolder']();
+}
+
+export function RDPPrintCreate() {
+  return window['go']['main']['App']['RDPPrintCreate']();
+}
+
+export function RDPPrintFinish(arg1, arg2) {
+  return window['go']['main']['App']['RDPPrintFinish'](arg1, arg2);
 }
 
 export function ReadImport(arg1, arg2) {
