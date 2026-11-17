@@ -42,12 +42,20 @@ type TunnelInfo struct {
 	Total int64 `json:"total"`
 }
 
+// maxTunnelConns caps the connections one tunnel forwards at a time. Every
+// connection holds an SSH channel (with its window buffers) and two goroutines,
+// so without a cap a local program, or anyone who can reach a tunnel bound to
+// a non-loopback address, could grow memory without limit. Connections over
+// the cap are closed right after accept.
+const maxTunnelConns = 256
+
 type tunnel struct {
 	spec     TunnelSpec
 	listener net.Listener
 	active   atomic.Int64
 	total    atomic.Int64
 	cancel   context.CancelFunc
+	slots    chan struct{}
 }
 
 func (t *tunnel) info() TunnelInfo {
@@ -122,7 +130,7 @@ func (c *ManagedConnection) StartTunnel(spec TunnelSpec) (TunnelInfo, error) {
 		return TunnelInfo{}, fmt.Errorf("listen on %s: %w", bind, err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	t := &tunnel{spec: spec, listener: ln, cancel: cancel}
+	t := &tunnel{spec: spec, listener: ln, cancel: cancel, slots: make(chan struct{}, maxTunnelConns)}
 	set.m[spec.ID] = t
 	go t.serve(ctx, client)
 	return t.info(), nil
@@ -134,25 +142,46 @@ func (t *tunnel) serve(ctx context.Context, client *ssh.Client) {
 		if err != nil {
 			return // listener closed
 		}
+		select {
+		case t.slots <- struct{}{}:
+		default:
+			_ = conn.Close() // at the cap
+			continue
+		}
 		t.total.Add(1)
+		t.active.Add(1)
 		go func() {
-			t.active.Add(1)
+			defer func() { <-t.slots }()
 			defer t.active.Add(-1)
 			defer conn.Close()
+			// Stopping the tunnel closes the connection whatever stage it is in.
+			stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+			defer stop()
+			dest := net.JoinHostPort(t.spec.DestHost, strconv.Itoa(t.spec.DestPort))
 			switch t.spec.Kind {
 			case TunnelLocal:
 				t.pipeTo(ctx, conn, func() (net.Conn, error) {
-					return client.Dial("tcp", net.JoinHostPort(t.spec.DestHost, strconv.Itoa(t.spec.DestPort)))
+					return dialChannel(ctx, client, dest)
 				})
 			case TunnelRemote:
 				t.pipeTo(ctx, conn, func() (net.Conn, error) {
-					return net.DialTimeout("tcp", net.JoinHostPort(t.spec.DestHost, strconv.Itoa(t.spec.DestPort)), dialTimeout)
+					d := net.Dialer{Timeout: dialTimeout}
+					return d.DialContext(ctx, "tcp", dest)
 				})
 			case TunnelDynamic:
-				serveSOCKS5(conn, client)
+				serveSOCKS5(ctx, conn, client)
 			}
 		}()
 	}
+}
+
+// dialChannel opens a direct-tcpip channel, giving up after dialTimeout or when
+// ctx is cancelled (a server that never answers the channel open would
+// otherwise hold the connection forever).
+func dialChannel(ctx context.Context, client *ssh.Client, addr string) (net.Conn, error) {
+	ctx, cancel := context.WithTimeout(ctx, dialTimeout)
+	defer cancel()
+	return client.DialContext(ctx, "tcp", addr)
 }
 
 func (t *tunnel) pipeTo(ctx context.Context, src net.Conn, dial func() (net.Conn, error)) {
@@ -231,7 +260,10 @@ func (c *ManagedConnection) closeTunnels() {
 }
 
 // serveSOCKS5 implements the no-auth CONNECT subset of SOCKS5 (RFC 1928).
-func serveSOCKS5(conn net.Conn, client *ssh.Client) {
+// Every buffer it reads is bounded by the protocol (at most 255 bytes), and the
+// handshake must finish within 15 seconds. ctx is the tunnel's, so stopping
+// the tunnel also closes the connections it is forwarding.
+func serveSOCKS5(ctx context.Context, conn net.Conn, client *ssh.Client) {
 	_ = conn.SetDeadline(time.Now().Add(15 * time.Second))
 	head := make([]byte, 2)
 	if _, err := io.ReadFull(conn, head); err != nil || head[0] != 5 {
@@ -297,7 +329,7 @@ func serveSOCKS5(conn net.Conn, client *ssh.Client) {
 	}
 	port := int(pb[0])<<8 | int(pb[1])
 
-	dst, err := client.Dial("tcp", net.JoinHostPort(host, strconv.Itoa(port)))
+	dst, err := dialChannel(ctx, client, net.JoinHostPort(host, strconv.Itoa(port)))
 	if err != nil {
 		socksReply(conn, 5) // connection refused
 		return
@@ -305,7 +337,7 @@ func serveSOCKS5(conn net.Conn, client *ssh.Client) {
 	defer dst.Close()
 	socksReply(conn, 0)
 	_ = conn.SetDeadline(time.Time{})
-	pipe(context.Background(), conn, dst)
+	pipe(ctx, conn, dst)
 }
 
 func socksReply(conn net.Conn, code byte) {
