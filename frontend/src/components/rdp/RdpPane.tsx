@@ -2,10 +2,11 @@ import { useEffect, useRef, useState } from 'react';
 import { Download, FolderOpen, Minimize2, Unplug, Upload, X } from 'lucide-react';
 import type { IronError, UserInteraction } from '@devolutions/iron-remote-desktop';
 import type { DroppedFile, FileInfo, RdpFileTransferProvider } from '@devolutions/iron-remote-desktop-rdp';
-import { RDPClose, RDPLastError, RDPOpenSaveFolder, RDPPickSaveFolder } from '../../../wailsjs/go/main/App';
+import { ListLocalPrinters, RDPClose, RDPLastError, RDPOpenSaveFolder, RDPPickSaveFolder } from '../../../wailsjs/go/main/App';
 import type { main } from '../../../wailsjs/go/models';
 import { RdpAudioPlayer } from '../../lib/rdpAudio';
-import { DiskStorageBackend, TRANSFER_CHUNK, printSink, saveRemoteFiles } from '../../lib/rdpFiles';
+import { DiskStorageBackend, TRANSFER_CHUNK, printSink, saveRemoteFiles, sessionPrinters } from '../../lib/rdpFiles';
+import { DriveChannel } from '../../lib/rdpDrives';
 import { useDialogs } from '../ui/Dialogs';
 
 /** Fired (detail: tab id) to pick local files and copy them to that RDP session's clipboard. */
@@ -130,6 +131,7 @@ export function RdpPane({
     let cancelled = false;
     let started = false;
     let connected = false;
+    let driveChannel: DriveChannel | null = null;
     const container = host.current!;
     const audio = (session.audio || 'local') === 'local' ? new RdpAudioPlayer() : null;
     const resumeAudio = () => audio?.resume();
@@ -197,15 +199,58 @@ export function RdpPane({
         if (fitPane && percent > 100) builder.withExtension(rdp.desktopScaleFactor(percent));
         if (audio) builder.withExtension(rdp.audioPlayback(audio.onMessage));
         if (session.printers) {
-          // The PDF driver makes every job a ready PDF that opens in the local viewer.
+          const local = await ListLocalPrinters().catch(() => []);
+          if (cancelled) return;
+          const native = session.printerDrivers === 'native';
+          const { list, targets } = sessionPrinters(local, session.printerDrivers);
           const sink = printSink(
-            () => dialogs.toast('The printed document opened in your PDF viewer', 'success'),
+            (deviceId) => targets.get(deviceId),
+            title || 'Remote desktop document',
+            (target) =>
+              dialogs.toast(target.mode === 'open' ? 'The printed document opened in your PDF viewer' : `Sent to ${target.printer}`, 'success'),
             (msg) => dialogs.toast(`Printing failed: ${msg}`, 'error')
           );
+          // Report the printers the server refused, once they have all answered.
+          const refused: string[] = [];
+          let report = 0;
+          sink.onPrinterAnnounced = (deviceId, accepted) => {
+            if (accepted || cancelled) return;
+            const name = list.find((p) => p.deviceId === deviceId)?.name;
+            if (name) refused.push(name);
+            window.clearTimeout(report);
+            report = window.setTimeout(() => {
+              const hint = native ? ' Its driver may be missing there: try "Universal (PDF)" printer drivers for this host.' : '';
+              dialogs.toast(`The remote computer didn't add ${refused.length === 1 ? 'the printer' : 'printers'} ${refused.join(', ')}.${hint}`, 'error');
+              refused.length = 0;
+            }, 1500);
+          };
+          builder.withExtension(rdp.printers(list)).withExtension(rdp.printJobStreamCallbacks(sink));
+        }
+        if (session.drivesFailed?.length) {
+          dialogs.toast(`Couldn't share ${session.drivesFailed.join(', ')}: the folder is missing or not accessible`, 'error');
+        }
+        const drives = session.drives ?? [];
+        if (drives.length > 0 && session.driveUrl) {
+          driveChannel = new DriveChannel(
+            session.driveUrl,
+            (r) => {
+              try {
+                ui.current?.invokeExtension(rdp.driveReply(r));
+              } catch (e) {
+                if (!cancelled) console.warn('[drives] reply refused', r, e);
+              }
+            },
+            (deviceId, accepted) => {
+              if (accepted || cancelled) return;
+              const name = drives.find((d) => d.deviceId === deviceId)?.name ?? 'a folder';
+              dialogs.toast(`The remote computer didn't add the shared folder ${name}`, 'error');
+            },
+            session.driveTrace
+          );
           builder
-            .withExtension(rdp.printerName('Terminyxx'))
-            .withExtension(rdp.printerDriverName(rdp.PrinterDriverName.MicrosoftPrintToPdf))
-            .withExtension(rdp.printJobStreamCallbacks(sink));
+            .withExtension(rdp.drives(drives.map((d) => ({ deviceId: d.deviceId, name: d.name }))))
+            .withExtension(rdp.driveRequestCallback(driveChannel.handle));
+          if (session.driveTrace) builder.withExtension(rdp.driveTrace(true));
         }
         const config = builder.build();
 
@@ -234,6 +279,7 @@ export function RdpPane({
       window.clearTimeout(timer);
       container.removeEventListener('pointerdown', resumeAudio);
       audio?.close();
+      driveChannel?.close();
       if (!started) return;
       live.current = false;
       try {

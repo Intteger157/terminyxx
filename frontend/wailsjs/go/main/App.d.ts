@@ -6,6 +6,7 @@ import {capture} from '../models';
 import {connection} from '../models';
 import {store} from '../models';
 import {importers} from '../models';
+import {printing} from '../models';
 import {rdp} from '../models';
 import {recording} from '../models';
 import {main} from '../models';
@@ -55,6 +56,8 @@ export function ListFolders():Promise<Array<store.Folder>>;
 export function ListImportSources():Promise<Array<importers.SourceInfo>>;
 
 export function ListLocalDir(arg1:string):Promise<Array<connection.FileEntry>>;
+
+export function ListLocalPrinters():Promise<Array<printing.Printer>>;
 
 export function ListRDPProfiles():Promise<Array<rdp.RDPProfile>>;
 
@@ -106,7 +109,7 @@ export function RDPPickSaveFolder():Promise<string>;
 
 export function RDPPrintCreate():Promise<string>;
 
-export function RDPPrintFinish(arg1:string,arg2:boolean):Promise<string>;
+export function RDPPrintFinish(arg1:string,arg2:boolean,arg3:string,arg4:string,arg5:string):Promise<string>;
 
 export function ReadImport(arg1:string,arg2:Array<string>):Promise<importers.Result>;
 

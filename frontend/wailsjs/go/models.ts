@@ -420,7 +420,12 @@ export namespace main {
 	    height: number;
 	    clipboard: boolean;
 	    printers: boolean;
+	    printerDrivers: string;
 	    audio: string;
+	    drives: rdpdrive.Drive[];
+	    drivesFailed: string[];
+	    driveUrl: string;
+	    driveTrace: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new RDPSession(source);
@@ -438,7 +443,53 @@ export namespace main {
 	        this.height = source["height"];
 	        this.clipboard = source["clipboard"];
 	        this.printers = source["printers"];
+	        this.printerDrivers = source["printerDrivers"];
 	        this.audio = source["audio"];
+	        this.drives = this.convertValues(source["drives"], rdpdrive.Drive);
+	        this.drivesFailed = source["drivesFailed"];
+	        this.driveUrl = source["driveUrl"];
+	        this.driveTrace = source["driveTrace"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+
+}
+
+export namespace printing {
+	
+	export class Printer {
+	    name: string;
+	    driver: string;
+	    default: boolean;
+	    network: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new Printer(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.driver = source["driver"];
+	        this.default = source["default"];
+	        this.network = source["network"];
 	    }
 	}
 
@@ -463,6 +514,8 @@ export namespace rdp {
 	    admin: boolean;
 	    gateway: string;
 	    drivePaths: string[];
+	    printerDrivers: string;
+	    drivesReadOnly: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new Options(source);
@@ -486,6 +539,8 @@ export namespace rdp {
 	        this.admin = source["admin"];
 	        this.gateway = source["gateway"];
 	        this.drivePaths = source["drivePaths"];
+	        this.printerDrivers = source["printerDrivers"];
+	        this.drivesReadOnly = source["drivesReadOnly"];
 	    }
 	}
 	export class RDPProfile {
@@ -545,6 +600,25 @@ export namespace rdp {
 		    }
 		    return a;
 		}
+	}
+
+}
+
+export namespace rdpdrive {
+	
+	export class Drive {
+	    deviceId: number;
+	    name: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Drive(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.deviceId = source["deviceId"];
+	        this.name = source["name"];
+	    }
 	}
 
 }

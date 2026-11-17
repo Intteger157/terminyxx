@@ -8,7 +8,7 @@
 # added for it below.
 set -euo pipefail
 
-COMMIT="${1:-79cd0600010f11bdbc879031e4008847e8176ffb}"
+COMMIT="${1:-6ad6e731cbf45ed2f00a4e0ee45dcd69e62a9438}"
 REPO="${IRONRDP_REPO:-https://github.com/Intteger157/IronRDP.git}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 WORK="$(mktemp -d)"

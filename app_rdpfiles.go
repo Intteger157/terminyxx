@@ -1,16 +1,23 @@
 package main
 
 import (
+	"bufio"
 	"errors"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"terminyxx/internal/connection"
 	"terminyxx/internal/filesink"
+	"terminyxx/internal/printing"
+	"terminyxx/internal/rdpdrive"
+	"terminyxx/internal/store"
 )
 
 // Files that the built-in RDP client hands over to this computer: files
@@ -108,10 +115,23 @@ func (a *App) RDPPrintCreate() (string, error) {
 	return a.files.CreateAt(filepath.Join(a.printsDir, name), 0o600)
 }
 
-// RDPPrintFinish completes a printed document and opens it in the default PDF
-// viewer, where it can be printed on a local printer or saved. Without commit
-// the partial document is deleted.
-func (a *App) RDPPrintFinish(handle string, commit bool) (string, error) {
+// ListLocalPrinters returns this computer's printers, the default one first.
+func (a *App) ListLocalPrinters() ([]printing.Printer, error) {
+	if err := a.guard(); err != nil {
+		return nil, err
+	}
+	return printing.List()
+}
+
+// RDPPrintFinish completes a document printed on the remote desktop. Without
+// commit the partial document is deleted. Otherwise, by mode:
+//   - "open": the PDF opens in the default viewer (the virtual PDF printer);
+//   - "pdf": the PDF is printed on printer, then deleted;
+//   - "raw": the data, rendered for printer by its own driver on the server,
+//     is sent to it unchanged, then deleted.
+//
+// If printing a PDF fails, it is opened instead so it isn't lost.
+func (a *App) RDPPrintFinish(handle string, commit bool, mode, printer, title string) (string, error) {
 	if a.files == nil {
 		return "", errors.New("not ready")
 	}
@@ -124,10 +144,24 @@ func (a *App) RDPPrintFinish(handle string, commit bool) (string, error) {
 	if err != nil || !commit {
 		return "", err
 	}
-	if err := filesink.Open(path); err != nil {
-		return path, err
+	if title == "" {
+		title = "Remote desktop document"
 	}
-	return path, nil
+	switch mode {
+	case "pdf":
+		if err := printing.PDF(printer, path, title); err != nil {
+			_ = filesink.Open(path)
+			return path, fmt.Errorf("%w; the document was opened instead", err)
+		}
+	case "raw":
+		err := printing.Raw(printer, path, title)
+		_ = os.Remove(path)
+		return "", err
+	default:
+		return path, filesink.Open(path)
+	}
+	_ = os.Remove(path)
+	return "", nil
 }
 
 // OpenPrintsFolder shows the folder with documents printed on remote desktops.
@@ -155,4 +189,57 @@ func (a *App) prunePrints(maxAge time.Duration) {
 			_ = os.Remove(filepath.Join(a.printsDir, e.Name()))
 		}
 	}
+}
+
+// openDrives starts the drive session of tabID with the profile's shared
+// folders (or every local drive) and returns those that will be announced,
+// plus the folders that could not be opened.
+func (a *App) openDrives(tabID string, paths []string, all, readOnly bool) ([]rdpdrive.Drive, []string) {
+	if a.drives == nil {
+		return nil, nil
+	}
+	if !all && len(paths) == 0 {
+		a.drives.Close(tabID)
+		return nil, nil
+	}
+	opened, failed := a.drives.Open(tabID, rdpdrive.Plan(paths, all, readOnly))
+	names := make([]string, 0, len(failed))
+	for _, d := range failed {
+		names = append(names, d.Path)
+	}
+	return opened, names
+}
+
+// serveDrives answers the drive requests of tabID's built-in RDP session on
+// its side channel. Paths are confined to the shared folders here; the
+// webview only relays. While the app is locked, every request is refused.
+func (a *App) serveDrives(tabID string, ws *websocket.Conn) {
+	if a.drives == nil {
+		return
+	}
+	s := a.drives.Get(tabID)
+	if s == nil {
+		return
+	}
+	// TERMINYXX_RDP_TRACE=1 logs every drive request to <data dir>/rdp-drives.log.
+	var trace io.Writer
+	if os.Getenv("TERMINYXX_RDP_TRACE") == "1" {
+		if dir, err := store.DataDir(); err == nil {
+			if f, err := os.OpenFile(filepath.Join(dir, "rdp-drives.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600); err == nil {
+				defer f.Close()
+				bw := bufio.NewWriterSize(f, 64<<10)
+				defer bw.Flush()
+				trace = bw
+			}
+		}
+	}
+	pulse := func() string {
+		up, down, upStall, downStall, ok := a.rdpgw.Traffic(tabID)
+		if !ok {
+			return "gateway: no RDP session"
+		}
+		return fmt.Sprintf("gateway: up=%d down=%d up_write_waiting=%v down_write_waiting=%v %s",
+			up, down, upStall.Round(time.Millisecond), downStall.Round(time.Millisecond), a.rdpgw.TCPInfo(tabID))
+	}
+	rdpdrive.Serve(s, ws, func() bool { return a.sec.lock != nil && a.sec.lock.Locked() }, trace, pulse)
 }

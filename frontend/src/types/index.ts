@@ -72,6 +72,10 @@ export interface RDPOptions {
   admin: boolean;
   gateway: string;
   drivePaths: string[];
+  /** Built-in client: share the drives read-only. */
+  drivesReadOnly?: boolean;
+  /** Built-in client: 'universal' (printed as PDF here) or 'native' (each printer's own driver on the server). */
+  printerDrivers: string;
 }
 
 export interface RDPProfile {

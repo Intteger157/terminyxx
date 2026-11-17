@@ -27,6 +27,15 @@ const AUDIO: { id: RDPOptions['audio']; label: string }[] = [
   { id: 'off', label: 'Off' },
 ];
 
+const PRINTER_DRIVERS: { id: string; label: string; hint: string }[] = [
+  { id: 'universal', label: 'Universal (PDF)', hint: 'Works with any server: it prints to PDF and this computer prints the PDF.' },
+  {
+    id: 'native',
+    label: 'Same as on this computer',
+    hint: "The server prints with each printer's own driver and the data goes to the printer unchanged. The server needs the same drivers installed.",
+  },
+];
+
 const isMac = typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform);
 
 export function RdpDialog({ initial, onClose, onSave, onSwitchToSsh }: RdpDialogProps) {
@@ -75,7 +84,7 @@ export function RdpDialog({ initial, onClose, onSave, onSwitchToSsh }: RdpDialog
       fullscreen,
       folderId: initial?.folderId,
       sortOrder: initial?.sortOrder,
-      options: { ...opts, gateway: opts.gateway.trim(), drives: opts.drives && opts.drivePaths.length > 0 },
+      options: { ...opts, gateway: opts.gateway.trim(), drives: opts.drivePaths.length > 0 },
     });
   };
 
@@ -160,7 +169,30 @@ export function RdpDialog({ initial, onClose, onSave, onSwitchToSsh }: RdpDialog
           <span className="label">Local resources</span>
           <Toggle checked={opts.clipboard} onChange={(v) => set('clipboard', v)} label={builtin ? 'Clipboard (text and files)' : 'Clipboard'} />
           {builtin && (
-            <Toggle checked={opts.printers} onChange={(v) => set('printers', v)} label="Printer (documents open here as PDF)" />
+            <>
+              <Toggle checked={opts.printers} onChange={(v) => set('printers', v)} label="Printers (this computer's printers and a PDF printer)" />
+              {opts.printers && (
+                <div className="pl-1">
+                  <span className="label">Printer drivers</span>
+                  <div className="flex gap-1.5">
+                    {PRINTER_DRIVERS.map((d) => (
+                      <button
+                        key={d.id}
+                        type="button"
+                        title={d.hint}
+                        onClick={() => set('printerDrivers', d.id)}
+                        className={`h-7 px-2.5 rounded-lg text-2xs transition-colors ${
+                          (opts.printerDrivers || 'universal') === d.id ? 'bg-accent/15 text-accent ring-1 ring-inset ring-accent/40' : 'bg-white/[0.04] text-gray-400 hover:text-gray-200'
+                        }`}
+                      >
+                        {d.label}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="mt-1 text-2xs text-gray-600">{PRINTER_DRIVERS.find((d) => d.id === (opts.printerDrivers || 'universal'))?.hint}</p>
+                </div>
+              )}
+            </>
           )}
           {!builtin && (
             <>
@@ -191,7 +223,6 @@ export function RdpDialog({ initial, onClose, onSave, onSwitchToSsh }: RdpDialog
           </div>
         </div>
 
-        {!builtin && (
         <div className="border-t border-white/[0.06] pt-3 space-y-2.5">
           <span className="label">Shared folders and drives</span>
           <Toggle checked={opts.allDrives} onChange={(v) => set('allDrives', v)} label="Share all local drives" />
@@ -210,11 +241,17 @@ export function RdpDialog({ initial, onClose, onSave, onSwitchToSsh }: RdpDialog
               <button type="button" className="btn-ghost h-7 px-2.5 text-2xs" onClick={addFolder}>
                 Add folder…
               </button>
-              {isMac && <p className="text-2xs text-gray-600">Folder sharing on macOS is configured in Windows App itself.</p>}
+              {isMac && !builtin && <p className="text-2xs text-gray-600">Folder sharing on macOS is configured in Windows App itself.</p>}
             </div>
           )}
+          {builtin && (opts.allDrives || opts.drivePaths.length > 0) && (
+            <Toggle
+              checked={!!opts.drivesReadOnly}
+              onChange={(v) => set('drivesReadOnly', v)}
+              label="Read-only (the remote computer can't change or delete files)"
+            />
+          )}
         </div>
-        )}
 
         {!builtin && !isMac && (
           <Field label="RD Gateway" hint="Optional gateway host, e.g. gw.example.com">

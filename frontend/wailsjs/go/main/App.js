@@ -94,6 +94,10 @@ export function ListLocalDir(arg1) {
   return window['go']['main']['App']['ListLocalDir'](arg1);
 }
 
+export function ListLocalPrinters() {
+  return window['go']['main']['App']['ListLocalPrinters']();
+}
+
 export function ListRDPProfiles() {
   return window['go']['main']['App']['ListRDPProfiles']();
 }
@@ -194,8 +198,8 @@ export function RDPPrintCreate() {
   return window['go']['main']['App']['RDPPrintCreate']();
 }
 
-export function RDPPrintFinish(arg1, arg2) {
-  return window['go']['main']['App']['RDPPrintFinish'](arg1, arg2);
+export function RDPPrintFinish(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['RDPPrintFinish'](arg1, arg2, arg3, arg4, arg5);
 }
 
 export function ReadImport(arg1, arg2) {

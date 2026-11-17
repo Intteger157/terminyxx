@@ -17,6 +17,7 @@ import (
 	"terminyxx/internal/filesink"
 	"terminyxx/internal/importers"
 	"terminyxx/internal/rdp"
+	"terminyxx/internal/rdpdrive"
 	"terminyxx/internal/rdpgw"
 	"terminyxx/internal/recording"
 	"terminyxx/internal/security"
@@ -37,11 +38,12 @@ type App struct {
 	connMgr *connection.ConnectionManager
 	data    *store.Store
 	vault   *store.Vault
-	rdp    rdp.Launcher
+	rdp     rdp.Launcher
 	rdpgw   *rdpgw.Gateway
 	stop    chan struct{}
 	sec     securityState
 	files   *filesink.Sink
+	drives  *rdpdrive.Manager
 
 	recordingsDir string
 	printsDir     string
@@ -82,7 +84,9 @@ func (a *App) startup(ctx context.Context) {
 		rdpCerts = filepath.Join(dir, "rdp_known_certs")
 	}
 	a.rdpgw = rdpgw.New(rdpgw.NewTrustStore(rdpCerts))
+	a.rdpgw.SetChannelHandler("drive", a.serveDrives)
 	a.files = filesink.New()
+	a.drives = rdpdrive.NewManager()
 	a.printsDir = "prints"
 	if dir, err := store.DataDir(); err == nil {
 		a.printsDir = filepath.Join(dir, "prints")
@@ -130,6 +134,9 @@ func (a *App) shutdown(ctx context.Context) {
 	}
 	if a.rdpgw != nil {
 		a.rdpgw.Shutdown()
+	}
+	if a.drives != nil {
+		a.drives.CloseAll()
 	}
 	if a.files != nil {
 		a.files.AbortAll()

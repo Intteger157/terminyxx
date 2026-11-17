@@ -35,6 +35,8 @@ export const DEFAULT_RDP_OPTIONS: RDPOptions = {
   admin: false,
   gateway: '',
   drivePaths: [],
+  drivesReadOnly: false,
+  printerDrivers: 'universal',
 };
 
 export function rdpForSave(p: RDPProfile) {

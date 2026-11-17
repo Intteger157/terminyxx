@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
 	"strconv"
 
+	"terminyxx/internal/rdpdrive"
 	"terminyxx/internal/rdpgw"
 )
 
@@ -22,11 +24,23 @@ type RDPSession struct {
 	Width       int    `json:"width"`
 	Height      int    `json:"height"`
 	Clipboard   bool   `json:"clipboard"`
-	// Printers adds a virtual printer whose documents open here as PDFs.
+	// Printers redirects the local printers, plus a virtual printer whose
+	// documents open here as PDFs.
 	Printers bool `json:"printers"`
+	// PrinterDrivers is "universal" or "native" (see rdp.Options).
+	PrinterDrivers string `json:"printerDrivers"`
 	// Audio is the profile's audio mode: "local" plays remote sound here,
 	// "remote" leaves it on the server, "off" mutes it.
 	Audio string `json:"audio"`
+	// Drives are the shared folders to announce; RDPDriveOp serves them.
+	Drives []rdpdrive.Drive `json:"drives"`
+	// DrivesFailed lists shared folders that could not be opened.
+	DrivesFailed []string `json:"drivesFailed"`
+	// DriveURL opens the WebSocket that serves the drives (see rdpdrive.Serve).
+	DriveURL string `json:"driveUrl"`
+	// DriveTrace asks the client to trace every drive request it sees
+	// (TERMINYXX_RDP_TRACE=1; the lines go to rdp-drives.log).
+	DriveTrace bool `json:"driveTrace"`
 }
 
 // RDPOpen prepares a built-in RDP session for tabID. It fetches the server
@@ -73,18 +87,30 @@ func (a *App) RDPOpen(tabID, profileID, password, acceptFingerprint string) (RDP
 	if password == "" {
 		password = p.Password
 	}
+	drives, drivesFailed := a.openDrives(tabID, p.Options.DrivePaths, p.Options.AllDrives, p.Options.DrivesReadOnly)
+	driveURL := ""
+	if len(drives) > 0 {
+		if driveURL, err = a.rdpgw.IssueChannel(tabID, "drive"); err != nil {
+			return RDPSession{}, err
+		}
+	}
 	return RDPSession{
-		ProxyURL:    url,
-		Token:       token,
-		Destination: dest,
-		Username:    p.Username,
-		Password:    password,
-		Domain:      p.Domain,
-		Width:       p.Width,
-		Height:      p.Height,
-		Clipboard:   p.Options.Clipboard,
-		Printers:    p.Options.Printers,
-		Audio:       p.Options.Audio,
+		ProxyURL:       url,
+		Token:          token,
+		Destination:    dest,
+		Username:       p.Username,
+		Password:       password,
+		Domain:         p.Domain,
+		Width:          p.Width,
+		Height:         p.Height,
+		Clipboard:      p.Options.Clipboard,
+		Printers:       p.Options.Printers,
+		PrinterDrivers: p.Options.PrinterDrivers,
+		Audio:          p.Options.Audio,
+		Drives:         drives,
+		DrivesFailed:   drivesFailed,
+		DriveURL:       driveURL,
+		DriveTrace:     driveURL != "" && os.Getenv("TERMINYXX_RDP_TRACE") == "1",
 	}, nil
 }
 
@@ -92,6 +118,9 @@ func (a *App) RDPOpen(tabID, profileID, password, acceptFingerprint string) (RDP
 func (a *App) RDPClose(tabID string) {
 	if a.rdpgw != nil {
 		a.rdpgw.Close(tabID)
+	}
+	if a.drives != nil {
+		a.drives.Close(tabID)
 	}
 }
 

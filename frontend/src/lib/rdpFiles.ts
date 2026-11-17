@@ -1,4 +1,5 @@
-import type { FileInfo, FileStorageBackend, FileWriteHandle, PrintJobStreamCallbacks, RdpFileTransferProvider } from '@devolutions/iron-remote-desktop-rdp';
+import type { FileInfo, FileStorageBackend, FileWriteHandle, PrintJobStreamCallbacks, RdpFileTransferProvider, RedirectedPrinter } from '@devolutions/iron-remote-desktop-rdp';
+import type { printing } from '../../wailsjs/go/models';
 import { RDPFileClose, RDPFileCreate, RDPFileWrite, RDPMakeDir, RDPPrintCreate, RDPPrintFinish } from '../../wailsjs/go/main/App';
 
 /** Chunk size for files copied between this computer and the remote desktop. */
@@ -104,30 +105,44 @@ export async function saveRemoteFiles(
   return done;
 }
 
+/** Where the jobs of one announced printer go (see RDPPrintFinish). */
+export interface PrintTarget {
+  /** open: show the PDF; pdf: print the PDF on `printer`; raw: send the data to `printer` unchanged. */
+  mode: 'open' | 'pdf' | 'raw';
+  printer: string;
+}
+
 /**
- * Receives documents printed to the session's virtual printer. With the
- * "Microsoft Print to PDF" driver each job is a PDF; it is written through Go
- * and opened in the default viewer when the job completes.
+ * Receives documents printed on the remote desktop. Each job is written
+ * through Go and, when it completes, handled as its printer's target says.
  */
-export function printSink(onPrinted: (path: string) => void, onFailed: (message: string) => void): PrintJobStreamCallbacks {
+export function printSink(
+  targetFor: (deviceId: number) => PrintTarget | undefined,
+  title: string,
+  onPrinted: (target: PrintTarget) => void,
+  onFailed: (message: string) => void
+): PrintJobStreamCallbacks {
   // Writes must reach Go in order, so each job is a promise chain that
   // resolves to the file handle ('' once the job has failed).
-  const jobs = new Map<number, Promise<string>>();
+  const jobs = new Map<number, { chain: Promise<string>; target: PrintTarget }>();
+  const fallback: PrintTarget = { mode: 'open', printer: '' };
   const fail = async (h: string, message: string) => {
-    if (h) await RDPPrintFinish(h, false).catch(() => {});
+    if (h) await RDPPrintFinish(h, false, '', '', '').catch(() => {});
     onFailed(message);
     return '';
   };
-  const job = (id: number) => {
-    let chain = jobs.get(id);
-    if (!chain) {
-      chain = RDPPrintCreate().catch((e) => fail('', String(e)));
-      jobs.set(id, chain);
+  const job = (id: number, deviceId?: number) => {
+    let j = jobs.get(id);
+    if (!j) {
+      const target = (deviceId !== undefined && targetFor(deviceId)) || fallback;
+      j = { chain: RDPPrintCreate().catch((e) => fail('', String(e))), target };
+      jobs.set(id, j);
     }
-    return chain;
+    return j;
   };
   const step = (id: number, fn: (h: string) => Promise<unknown>) => {
-    const chain = job(id).then(async (h) => {
+    const j = job(id);
+    j.chain = j.chain.then(async (h) => {
       if (!h) return '';
       try {
         await fn(h);
@@ -136,27 +151,61 @@ export function printSink(onPrinted: (path: string) => void, onFailed: (message:
         return fail(h, String(e));
       }
     });
-    jobs.set(id, chain);
-    return chain;
   };
   return {
-    onJobStart: (id) => void job(id),
+    onJobStart: (id, deviceId) => void job(id, deviceId),
     onJobData(id, chunk) {
       const copy = chunk.slice(); // the buffer may be reused after the callback
-      void step(id, (h) => RDPFileWrite(h, toBase64(copy)));
+      step(id, (h) => RDPFileWrite(h, toBase64(copy)));
     },
     onJobComplete(id) {
-      void job(id)
+      const { chain, target } = job(id);
+      void chain
         .then(async (h) => {
-          if (h) onPrinted(await RDPPrintFinish(h, true));
+          if (!h) return;
+          await RDPPrintFinish(h, true, target.mode, target.printer, title);
+          onPrinted(target);
         })
         .catch((e) => onFailed(String(e)))
         .finally(() => jobs.delete(id));
     },
     onJobError(id) {
       void job(id)
-        .then((h) => (h ? fail(h, 'The print job failed') : ''))
+        .chain.then((h) => (h ? fail(h, 'The print job failed') : ''))
         .finally(() => jobs.delete(id));
     },
   };
+}
+
+/** The PDF printer that every session gets when printers are redirected. */
+export const PDF_PRINTER_NAME = 'Terminyxx PDF';
+
+const PDF_DRIVER = 'Microsoft Print to PDF';
+
+/**
+ * The printers to announce in a session: this computer's printers (the
+ * default one stays the default) and the PDF printer. With "native" drivers
+ * the server renders each job with the printer's own driver and the data
+ * goes to the printer unchanged; with "universal" ones the server prints to
+ * PDF and the PDF is printed here, which works without drivers on the server.
+ */
+export function sessionPrinters(local: printing.Printer[], drivers: string) {
+  const native = drivers === 'native';
+  const list: RedirectedPrinter[] = [{ name: PDF_PRINTER_NAME, driverName: PDF_DRIVER, deviceId: 2, network: false }];
+  const targets = new Map<number, PrintTarget>([[2, { mode: 'open', printer: '' }]]);
+  let id = 3;
+  for (const p of local) {
+    if (p.name === PDF_PRINTER_NAME) continue;
+    list.push({
+      name: p.name,
+      driverName: native && p.driver ? p.driver : PDF_DRIVER,
+      deviceId: id,
+      isDefault: p.default,
+      network: p.network,
+    });
+    targets.set(id, { mode: native && p.driver ? 'raw' : 'pdf', printer: p.name });
+    id++;
+  }
+  if (!list.some((p) => p.isDefault)) list[0].isDefault = true;
+  return { list, targets };
 }

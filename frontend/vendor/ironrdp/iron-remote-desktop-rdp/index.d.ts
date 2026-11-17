@@ -141,6 +141,110 @@ export declare interface DownloadHandle {
     completion: Promise<Blob>;
 }
 
+/** File metadata in a {@link DriveReply}. */
+export declare interface DriveFileInfo {
+    /** Entry name (`list` replies only). */
+    name?: string;
+    dir: boolean;
+    size: number;
+    created: number;
+    accessed: number;
+    written: number;
+    changed: number;
+    /** FILE_ATTRIBUTE_* bits (read-only 0x1, hidden 0x2, ...). */
+    attributes?: number;
+    deletePending?: boolean;
+}
+
+/** The answer to a {@link DriveRequest}. */
+export declare interface DriveReply {
+    id: number;
+    /** NTSTATUS; 0 is success. */
+    status: number;
+    /** `create`: the new handle. */
+    fileId?: number;
+    /** `create` (optional) and `stat`: the file's metadata. */
+    /** `create`: FILE_SUPERSEDED 0, OPENED 1, CREATED 2, OVERWRITTEN 3. */
+    information?: number;
+    /** `read`: the bytes read. */
+    data?: Uint8Array;
+    /** `write`: bytes written. */
+    length?: number;
+    stat?: DriveFileInfo;
+    /** `list`: matching entries, including `.` and `..` when they match. */
+    entries?: DriveFileInfo[];
+    /** `volume`: total and free bytes. */
+    total?: number;
+    free?: number;
+}
+
+export declare function driveReply(reply: DriveReply): Extension;
+
+export declare type DriveRequest = {
+    id: number;
+    deviceId: number;
+    fileId: number;
+} & ({
+    op: 'create';
+    /** `\`-separated, relative to the drive root (empty or `\` is the root). */
+    path: string;
+    desiredAccess: number;
+    /** FILE_SUPERSEDE 0, OPEN 1, CREATE 2, OPEN_IF 3, OVERWRITE 4, OVERWRITE_IF 5. */
+    disposition: number;
+    /** FILE_DIRECTORY_FILE 0x1, FILE_NON_DIRECTORY_FILE 0x40, FILE_DELETE_ON_CLOSE 0x1000, ... */
+    options: number;
+    attributes: number;
+    shareAccess: number;
+} | {
+    op: 'close' | 'stat' | 'volume' | 'reset';
+} | {
+    op: 'read';
+    offset: number;
+    length: number;
+} | {
+    op: 'write';
+    offset: number;
+    data: Uint8Array;
+}
+/** `path` is `\dir\pattern`, where the pattern may hold `*` and `?`. */
+| {
+    op: 'list';
+    path: string;
+} | {
+    op: 'setBasic';
+    created: number;
+    accessed: number;
+    written: number;
+    changed: number;
+    attributes: number;
+} | {
+    op: 'setSize';
+    size: number;
+} | {
+    op: 'setDelete';
+    delete: boolean;
+} | {
+    op: 'rename';
+    to: string;
+    replace: boolean;
+} | {
+    op: 'announced';
+    accepted: boolean;
+    resultCode: number;
+}
+/** With {@link driveTrace}: a trace line in `path`; no reply. */
+| {
+    op: 'note';
+    path: string;
+});
+
+export declare function driveRequestCallback(cb: (request: DriveRequest) => void): Extension;
+
+export declare function drives(list: RedirectedDrive[]): Extension;
+
+/** Also sends a `note` request (ID 0, text in `path`) for every IRP and every completion, for diagnostics. */
+export declare function driveTrace(enable: boolean): Extension;
+
 /**
  * A file extracted from a drag-and-drop event, with optional path metadata
  * from directory traversal via the File and Directory Entries API.
@@ -1103,6 +1207,14 @@ export declare interface RdpFileTransferProviderOptions {
      *   bypassing auto-detection.
      */
     storageBackend?: StorageBackendPreference | FileStorageBackend;
+}
+
+/** A folder announced with {@link drives}. */
+export declare interface RedirectedDrive {
+    /** RDPDR device ID, unique among drives and printers. */
+    deviceId: number;
+    /** Name shown on the host, as in "<name> on <client name>". */
+    name: string;
 }
 
 /** A printer announced with {@link printers}. */

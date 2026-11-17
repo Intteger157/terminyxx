@@ -16,6 +16,7 @@ import (
 	"net"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -234,4 +235,30 @@ func roundTrip(t *testing.T, url, token string) *pdu {
 	defer ws.Close()
 	sendRequest(t, ws, token)
 	return readPDU(t, ws)
+}
+
+func TestChannelTicketsAreSingleUse(t *testing.T) {
+	g := New(nil)
+	defer g.Shutdown()
+	got := make(chan string, 1)
+	g.SetChannelHandler("drive", func(tabID string, ws *websocket.Conn) { got <- tabID })
+	url, err := g.IssueChannel("tab1", "drive")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws, _, err := websocket.DefaultDialer.Dial(url, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws.Close()
+	if tab := <-got; tab != "tab1" {
+		t.Fatalf("tab = %q", tab)
+	}
+	if _, resp, err := websocket.DefaultDialer.Dial(url, nil); err == nil || resp == nil || resp.StatusCode != 401 {
+		t.Fatalf("second use: %v %v", err, resp)
+	}
+	bad := url[:strings.LastIndex(url, "=")+1] + "00"
+	if _, _, err := websocket.DefaultDialer.Dial(bad, nil); err == nil {
+		t.Fatal("unknown ticket accepted")
+	}
 }

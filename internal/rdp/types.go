@@ -19,11 +19,17 @@ type Options struct {
 	Gateway     string `json:"gateway"`
 	// DrivePaths are local folders/drives shared with the remote session.
 	DrivePaths []string `json:"drivePaths"`
+	// PrinterDrivers is how the built-in client redirects local printers:
+	// "universal" (the server prints to PDF, printed here) or "native" (the
+	// server uses each printer's own driver, which it must have installed).
+	PrinterDrivers string `json:"printerDrivers"`
+	// DrivesReadOnly shares the drives read-only (built-in client only).
+	DrivesReadOnly bool `json:"drivesReadOnly"`
 }
 
 // DefaultOptions matches the behaviour before options existed (clipboard only).
 func DefaultOptions() Options {
-	return Options{Clipboard: true, Audio: "local", DynamicRes: true, DrivePaths: []string{}}
+	return Options{Clipboard: true, Audio: "local", DynamicRes: true, DrivePaths: []string{}, PrinterDrivers: "universal"}
 }
 
 type RDPProfile struct {

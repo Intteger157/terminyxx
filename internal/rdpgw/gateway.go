@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -39,6 +40,10 @@ type Gateway struct {
 	tickets map[string]*ticket
 	live    map[string]*liveSession // by tab id
 	errs    map[string]string       // last failure by tab id
+
+	handlers  map[string]ChannelHandler
+	chTickets map[string]*channelTicket
+	channels  map[string][]*websocket.Conn // side channels by tab id
 }
 
 type ticket struct {
@@ -51,6 +56,41 @@ type ticket struct {
 type liveSession struct {
 	ws   *websocket.Conn
 	conn net.Conn
+
+	// Traffic, for diagnostics: bytes relayed each way, and when the write
+	// in progress started (0 when none), which shows a side that stopped reading.
+	up, down           atomic.Int64
+	upSince, downSince atomic.Int64
+}
+
+// Traffic reports the bytes relayed for tabID's session (up is client to
+// server) and how long a write has been waiting in each direction.
+func (g *Gateway) Traffic(tabID string) (up, down int64, upStall, downStall time.Duration, ok bool) {
+	g.mu.Lock()
+	l := g.live[tabID]
+	g.mu.Unlock()
+	if l == nil {
+		return 0, 0, 0, 0, false
+	}
+	stall := func(since int64) time.Duration {
+		if since == 0 {
+			return 0
+		}
+		return time.Since(time.Unix(0, since))
+	}
+	return l.up.Load(), l.down.Load(), stall(l.upSince.Load()), stall(l.downSince.Load()), true
+}
+
+// TCPInfo describes the TCP connection of tabID's session to the server, for
+// the drive trace.
+func (g *Gateway) TCPInfo(tabID string) string {
+	g.mu.Lock()
+	l := g.live[tabID]
+	g.mu.Unlock()
+	if l == nil || l.conn == nil {
+		return ""
+	}
+	return tcpInfo(l.conn)
 }
 
 func (l *liveSession) close() {
@@ -79,6 +119,7 @@ func (g *Gateway) ensureListening() (string, error) {
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/rdp", g.serveWS)
+	mux.HandleFunc("/channel", g.serveChannel)
 	g.ln = ln
 	g.srv = &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	go func() { _ = g.srv.Serve(ln) }()
@@ -149,6 +190,7 @@ func (g *Gateway) Close(tabID string) {
 			delete(g.tickets, k)
 		}
 	}
+	g.closeChannelsLocked(tabID)
 	g.mu.Unlock()
 	if l != nil {
 		l.close()
@@ -160,6 +202,7 @@ func (g *Gateway) Shutdown() {
 	g.mu.Lock()
 	live := g.live
 	g.live = map[string]*liveSession{}
+	g.closeChannelsLocked("")
 	srv := g.srv
 	g.mu.Unlock()
 	for _, l := range live {
@@ -375,12 +418,12 @@ func (g *Gateway) session(ctx context.Context, ws *websocket.Conn) error {
 		g.mu.Unlock()
 		l.close()
 	}()
-	relay(ws, conn)
+	relay(ws, conn, l)
 	return nil
 }
 
 // relay copies the RDP stream both ways until either side closes.
-func relay(ws *websocket.Conn, conn net.Conn) {
+func relay(ws *websocket.Conn, conn net.Conn, l *liveSession) {
 	start := time.Now()
 	if traceEnabled {
 		log.Printf("rdptrace: relay started")
@@ -405,9 +448,13 @@ func relay(ws *websocket.Conn, conn net.Conn) {
 				continue
 			}
 			up.feed(data)
-			if _, err := conn.Write(data); err != nil {
+			l.upSince.Store(time.Now().UnixNano())
+			_, err = conn.Write(data)
+			l.upSince.Store(0)
+			if err != nil {
 				return
 			}
+			l.up.Add(int64(len(data)))
 		}
 	}()
 	go func() {
@@ -417,9 +464,13 @@ func relay(ws *websocket.Conn, conn net.Conn) {
 			n, err := conn.Read(buf)
 			if n > 0 {
 				down.feed(buf[:n])
-				if werr := ws.WriteMessage(websocket.BinaryMessage, buf[:n]); werr != nil {
+				l.downSince.Store(time.Now().UnixNano())
+				werr := ws.WriteMessage(websocket.BinaryMessage, buf[:n])
+				l.downSince.Store(0)
+				if werr != nil {
 					return
 				}
+				l.down.Add(int64(n))
 			}
 			if err != nil {
 				if traceEnabled && !down.done {
