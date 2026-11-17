@@ -164,7 +164,7 @@ func TestSecureCRT(t *testing.T) {
 	}
 	h := res.Hosts[0]
 	if h.Name != "web-01" || strings.Join(h.Folder, "/") != "Production" || h.Port != 2218 || h.User != "deploy" ||
-		!strings.HasSuffix(filepath.ToSlash(h.KeyFile), "keys/id_ed25519") || h.Warning != "via bastion" {
+		!strings.HasSuffix(strings.ReplaceAll(h.KeyFile, `\`, "/"), "keys/id_ed25519") || h.Warning != "via bastion" {
 		t.Fatalf("securecrt = %+v", h)
 	}
 	if res.Skipped["Telnet"] != 1 {
