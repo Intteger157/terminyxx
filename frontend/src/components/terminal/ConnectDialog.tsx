@@ -33,6 +33,7 @@ export function ConnectDialog({ initial, folders, onClose, onConnect }: ConnectD
   const [allowLegacy, setAllowLegacy] = useState(!!initial?.allowLegacyAlgorithms);
   const [agentForwarding, setAgentForwarding] = useState(!!initial?.agentForwarding);
   const [advanced, setAdvanced] = useState(allowLegacy || agentForwarding);
+  const [sftpOnly, setSftpOnly] = useState(!!initial?.sftpOnly);
   const [jumpProfileId, setJumpProfileId] = useState(initial?.jumpProfileId ?? '');
   const [tunnels, setTunnels] = useState<SavedTunnel[]>(initial?.tunnels ?? []);
   const [network, setNetwork] = useState(!!initial?.jumpProfileId || (initial?.tunnels?.length ?? 0) > 0);
@@ -63,6 +64,7 @@ export function ConnectDialog({ initial, folders, onClose, onConnect }: ConnectD
         allowLegacyAlgorithms: allowLegacy,
         agentForwarding,
         jumpProfileId,
+        sftpOnly,
         tunnels: tunnels.filter((t) => t.kind === 'dynamic' || (t.destHost.trim() && t.destPort > 0)).map((t) => ({ ...t, destHost: t.destHost.trim(), bindHost: t.bindHost.trim() })),
   });
   const handleSubmit = (e: React.FormEvent) => {
@@ -189,6 +191,13 @@ export function ConnectDialog({ initial, folders, onClose, onConnect }: ConnectD
             </div>
           </Field>
         )}
+
+        <div>
+          <Toggle checked={sftpOnly} onChange={setSftpOnly} label="SFTP only (no shell access)" />
+          <p className="mt-1 ml-[42px] text-2xs text-gray-600">
+            For servers that allow file transfer but not a terminal. Opens the file manager instead of a shell.
+          </p>
+        </div>
 
         <div>
           <button

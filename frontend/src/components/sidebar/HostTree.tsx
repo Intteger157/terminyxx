@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { DragEvent, ReactNode } from 'react';
+import { ProtoBadge } from './ProtoBadge';
 import { ChevronRight, Folder as FolderIcon, FolderOpen, Monitor, MoreHorizontal } from 'lucide-react';
 import { Avatar } from '../ui/Avatar';
 import type { DragItem, FolderNode, HostItem, Tree } from './tree';
@@ -175,7 +176,10 @@ export function HostTree({ tree, rootId = '', connected, collapsed, onToggle, re
             size={26}
           />
           <span className="min-w-0 flex-1">
-            <span className="block text-[12.5px] font-medium text-gray-200 truncate leading-tight">{h.name}</span>
+            <span className="flex items-center gap-1.5 min-w-0 leading-tight">
+              <span className="text-[12.5px] font-medium text-gray-200 truncate">{h.name}</span>
+              <ProtoBadge host={h} />
+            </span>
             <span className="block text-2xs text-gray-500 truncate">{h.detail}</span>
           </span>
         </button>

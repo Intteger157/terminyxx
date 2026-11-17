@@ -320,6 +320,26 @@ func TestSSHJumpAndTunnelsRoundTrip(t *testing.T) {
 	}
 }
 
+func TestSSHSFTPOnlyRoundTrip(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "t.db"), NewMemorySecrets())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	must(t, s.SaveSSHProfile(SSHProfile{ID: "a", Name: "a", Host: "h", Username: "u", SFTPOnly: true}))
+	must(t, s.SaveSSHProfile(SSHProfile{ID: "b", Name: "b", Host: "h", Username: "u"}))
+	a, _ := s.GetSSHProfile("a")
+	b, _ := s.GetSSHProfile("b")
+	if !a.SFTPOnly || b.SFTPOnly {
+		t.Fatalf("sftpOnly: a=%v b=%v", a.SFTPOnly, b.SFTPOnly)
+	}
+	a.SFTPOnly = false
+	must(t, s.SaveSSHProfile(a))
+	if a, _ = s.GetSSHProfile("a"); a.SFTPOnly {
+		t.Fatal("sftpOnly should clear on update")
+	}
+}
+
 func TestSnippets(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "t.db"), NewMemorySecrets())
 	if err != nil {

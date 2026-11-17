@@ -14,6 +14,7 @@ export function sshForSave(p: SSHProfile) {
     sortOrder: p.sortOrder ?? 0,
     allowLegacyAlgorithms: !!p.allowLegacyAlgorithms,
     agentForwarding: !!p.agentForwarding,
+    sftpOnly: !!p.sftpOnly,
   });
 }
 

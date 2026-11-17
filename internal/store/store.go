@@ -38,6 +38,9 @@ type SSHProfile struct {
 	JumpProfileID string `json:"jumpProfileId"`
 	// Tunnels are port forwards the user saved for this host.
 	Tunnels []Tunnel `json:"tunnels"`
+	// SFTPOnly marks a host that only offers SFTP (no shell): the UI opens the
+	// file manager and never starts a terminal.
+	SFTPOnly bool `json:"sftpOnly"`
 }
 
 // Tunnel is a saved port forward (same shape as connection.TunnelSpec).
@@ -180,6 +183,9 @@ CREATE TABLE snippets (
     execute INTEGER NOT NULL DEFAULT 1,
     sort_order INTEGER NOT NULL DEFAULT 0
 );`,
+	// v8: SFTP-only hosts (no shell).
+	`
+ALTER TABLE ssh_profiles ADD COLUMN sftp_only INTEGER NOT NULL DEFAULT 0;`,
 }
 
 func (s *Store) migrate() error {
@@ -237,14 +243,15 @@ func (s *Store) moveLegacyPasswords() {
 
 // --- SSH profiles ---
 
-const sshColumns = `id, name, host, port, username, auth_type, password, key_path, folder_id, sort_order, allow_legacy_algorithms, agent_forwarding, jump_profile_id, tunnels`
+const sshColumns = `id, name, host, port, username, auth_type, password, key_path, folder_id, sort_order, allow_legacy_algorithms, agent_forwarding, jump_profile_id, tunnels, sftp_only`
 
 func scanSSH(row interface{ Scan(...any) error }) (SSHProfile, string, error) {
 	var p SSHProfile
 	var dbPassword string
-	var legacy, agentFwd int
+	var legacy, agentFwd, sftpOnly int
 	var tunnels string
-	err := row.Scan(&p.ID, &p.Name, &p.Host, &p.Port, &p.Username, &p.AuthType, &dbPassword, &p.KeyPath, &p.FolderID, &p.SortOrder, &legacy, &agentFwd, &p.JumpProfileID, &tunnels)
+	err := row.Scan(&p.ID, &p.Name, &p.Host, &p.Port, &p.Username, &p.AuthType, &dbPassword, &p.KeyPath, &p.FolderID, &p.SortOrder, &legacy, &agentFwd, &p.JumpProfileID, &tunnels, &sftpOnly)
+	p.SFTPOnly = sftpOnly == 1
 	p.Tunnels = []Tunnel{}
 	if tunnels != "" {
 		_ = json.Unmarshal([]byte(tunnels), &p.Tunnels)
@@ -342,9 +349,9 @@ func (s *Store) SaveSSHProfile(p SSHProfile) error {
 	if exists {
 		_, err = s.db.Exec(`
 UPDATE ssh_profiles SET name=?, host=?, port=?, username=?, auth_type=?, key_path=?, folder_id=?,
-    allow_legacy_algorithms=?, agent_forwarding=?, jump_profile_id=?, tunnels=?
+    allow_legacy_algorithms=?, agent_forwarding=?, jump_profile_id=?, tunnels=?, sftp_only=?
 WHERE id=?`, p.Name, p.Host, p.Port, p.Username, p.AuthType, p.KeyPath, p.FolderID,
-			boolInt(p.AllowLegacyAlgorithms), boolInt(p.AgentForwarding), p.JumpProfileID, string(tunnelsJSON), p.ID)
+			boolInt(p.AllowLegacyAlgorithms), boolInt(p.AgentForwarding), p.JumpProfileID, string(tunnelsJSON), boolInt(p.SFTPOnly), p.ID)
 		if err != nil {
 			return err
 		}
@@ -358,9 +365,9 @@ WHERE id=?`, p.Name, p.Host, p.Port, p.Username, p.AuthType, p.KeyPath, p.Folder
 		return err
 	}
 
-	_, err = s.db.Exec(`INSERT INTO ssh_profiles (`+sshColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	_, err = s.db.Exec(`INSERT INTO ssh_profiles (`+sshColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		p.ID, p.Name, p.Host, p.Port, p.Username, p.AuthType, dbPassword, p.KeyPath, p.FolderID, sortOrder,
-		boolInt(p.AllowLegacyAlgorithms), boolInt(p.AgentForwarding), p.JumpProfileID, string(tunnelsJSON))
+		boolInt(p.AllowLegacyAlgorithms), boolInt(p.AgentForwarding), p.JumpProfileID, string(tunnelsJSON), boolInt(p.SFTPOnly))
 	return err
 }
 

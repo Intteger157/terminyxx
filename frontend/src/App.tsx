@@ -165,7 +165,7 @@ function App() {
         : prev
     );
   }, [activeTabId]);
-  const sftpOpen = !!(activeTab && activeTab.status === 'connected' && sftpOpenFor[activeTab.id]);
+  const sftpOpen = !!(activeTab && activeTab.status === 'connected' && !activeTab.profile?.sftpOnly && sftpOpenFor[activeTab.id]);
   const connectedProfileIds = useMemo(
     () => new Set(tabs.filter((t) => t.status === 'connected' && t.profile).map((t) => t.profile!.id)),
     [tabs]
@@ -488,7 +488,7 @@ function App() {
   };
 
   const toggleSftp = () => {
-    if (activeTab?.status !== 'connected' || activeTab.stream) return;
+    if (activeTab?.status !== 'connected' || activeTab.stream || activeTab.profile?.sftpOnly) return;
     setSftpOpenFor((s) => ({ ...s, [activeTab.id]: !s[activeTab.id] }));
   };
 
@@ -563,7 +563,7 @@ function App() {
     { id: 'sync', group: 'Actions', label: 'Encrypted sync file (export / import hosts)', icon: <Settings size={14} />, keywords: 'backup restore transfer migrate cloud dropbox', run: () => setSettingsOpen('sync') },
     { id: 'telnet', group: 'Actions', label: 'New Telnet connection', icon: <Plus size={14} />, keywords: 'router switch network device', run: () => setStreamDialog('telnet') },
     { id: 'serial', group: 'Actions', label: 'New serial port connection', icon: <Plus size={14} />, keywords: 'com uart console usb tty baud', run: () => setStreamDialog('serial') },
-    ...(activeTab?.status === 'connected' && activeTab.profile
+    ...(activeTab?.status === 'connected' && activeTab.profile && !activeTab.profile.sftpOnly
       ? [{ id: 'containers', group: 'Actions', label: 'Containers (Docker, Podman, Kubernetes)', icon: <SquareTerminal size={14} />, keywords: 'docker exec shell pod kubectl podman', run: () => setContainersFor(activeTab.id) } as PaletteItem]
       : []),
     { id: 'recordings', group: 'Actions', label: 'Session recordings', icon: <Circle size={14} />, keywords: 'record replay playback history log search asciinema', run: () => setRecordingsOpen(true) },
@@ -574,7 +574,9 @@ function App() {
     { id: 'sidebar', group: 'Actions', label: sidebar.rail ? 'Expand sidebar' : 'Collapse sidebar', icon: <PanelLeft size={14} />, shortcut: [mod, '⇧', 'B'], run: toggleRail },
     ...(activeTab?.status === 'connected'
       ? [
-          { id: 'sftp', group: 'Actions', label: sftpOpen ? 'Hide SFTP panel' : 'Show SFTP panel', icon: <FolderTree size={14} />, shortcut: [mod, '⇧', 'F'], run: toggleSftp } as PaletteItem,
+          ...(activeTab.profile?.sftpOnly
+            ? []
+            : [{ id: 'sftp', group: 'Actions', label: sftpOpen ? 'Hide SFTP panel' : 'Show SFTP panel', icon: <FolderTree size={14} />, shortcut: [mod, '⇧', 'F'], run: toggleSftp } as PaletteItem]),
           { id: 'disc', group: 'Actions', label: `Disconnect ${activeTab.title}`, icon: <Unplug size={14} />, run: () => handleDisconnect(activeTab.id) } as PaletteItem,
         ]
       : []),
@@ -662,7 +664,15 @@ function App() {
               openMenu(e, [...paneEntries(id), { type: 'separator' }, { label: 'Close pane', icon: <X size={13} />, onSelect: () => handleCloseTab(id) }])
             }
             renderPane={(tab, { visible, focused }) =>
-              tab.started ? (
+              tab.started && tab.profile?.sftpOnly ? (
+                // SFTP-only host: no shell, the file manager is the whole pane.
+                <>
+                  {tab.status === 'connected' && (
+                    <SftpPanel fill connectionId={tab.id} visible={visible} onClose={() => {}} />
+                  )}
+                  {tab.status !== 'connected' && <StatusOverlay tab={tab} onReconnect={() => handleReconnect(tab)} />}
+                </>
+              ) : tab.started ? (
                 <>
                   <XTermWrapper
                     connectionId={tab.id}
@@ -684,6 +694,7 @@ function App() {
           {tabs.map(
             (tab) =>
               tab.status === 'connected' &&
+              !tab.profile?.sftpOnly &&
               sftpOpenFor[tab.id] && (
                 <SftpPanel
                   key={tab.id}

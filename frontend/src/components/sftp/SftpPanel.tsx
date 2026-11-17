@@ -30,6 +30,8 @@ interface SftpPanelProps {
   connectionId: string;
   visible: boolean;
   onClose: () => void;
+  /** Fill the parent (SFTP-only sessions) instead of being a resizable drawer. */
+  fill?: boolean;
 }
 
 const emptyPane = (path = ''): PaneState => ({ path, entries: [], cursor: 0, selected: new Set(), loading: true, error: null });
@@ -75,7 +77,7 @@ function initialHeight(): number {
   return 320;
 }
 
-export function SftpPanel({ connectionId, visible, onClose }: SftpPanelProps) {
+export function SftpPanel({ connectionId, visible, onClose, fill = false }: SftpPanelProps) {
   const dialogs = useDialogs();
   const [local, setLocal] = useState<PaneState>(emptyPane());
   const [remote, setRemote] = useState<PaneState>(emptyPane('/'));
@@ -537,13 +539,17 @@ export function SftpPanel({ connectionId, visible, onClose }: SftpPanelProps) {
       ref={rootRef}
       tabIndex={0}
       onKeyDown={onKeyDown}
-      className={`card relative flex-col flex-shrink-0 outline-none overflow-hidden animate-slide-up focus-visible:outline-none ${visible ? 'flex' : 'hidden'}`}
-      style={{ height }}
+      className={`card relative flex-col outline-none overflow-hidden focus-visible:outline-none ${
+        fill ? 'absolute inset-0' : 'flex-shrink-0 animate-slide-up'
+      } ${visible ? 'flex' : 'hidden'}`}
+      style={fill ? undefined : { height }}
     >
       {/* resize handle */}
-      <div className="group absolute top-0 left-0 right-0 h-2 cursor-row-resize z-10 flex justify-center" onMouseDown={startResize}>
-        <span className="mt-[3px] w-10 h-1 rounded-full bg-white/10 group-hover:bg-accent/60 transition-colors" />
-      </div>
+      {!fill && (
+        <div className="group absolute top-0 left-0 right-0 h-2 cursor-row-resize z-10 flex justify-center" onMouseDown={startResize}>
+          <span className="mt-[3px] w-10 h-1 rounded-full bg-white/10 group-hover:bg-accent/60 transition-colors" />
+        </div>
+      )}
 
       <div className="flex items-center gap-3 pl-3 pr-1.5 pt-2.5 pb-1.5">
         <span className="flex items-center gap-1.5 text-[12.5px] font-semibold text-gray-200">
@@ -558,9 +564,11 @@ export function SftpPanel({ connectionId, visible, onClose }: SftpPanelProps) {
           ))}
         </div>
         <div className="flex-1" />
-        <button className="icon-btn" onClick={onClose} title="Close (Ctrl+Shift+F)" tabIndex={-1}>
-          <X size={14} />
-        </button>
+        {!fill && (
+          <button className="icon-btn" onClick={onClose} title="Close (Ctrl+Shift+F)" tabIndex={-1}>
+            <X size={14} />
+          </button>
+        )}
       </div>
 
       <div className="flex flex-1 gap-2 px-2 pb-2 min-h-0">
