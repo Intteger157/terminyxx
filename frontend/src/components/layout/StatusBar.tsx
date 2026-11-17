@@ -1,4 +1,4 @@
-import { ArrowUpCircle, Copy, EyeOff, ScrollText, FolderTree, Lock, Plug, RotateCw, ShieldAlert, ShieldCheck, Unplug } from 'lucide-react';
+import { ArrowUpCircle, Box, Copy, EyeOff, ScrollText, FolderTree, Lock, Plug, RotateCw, ShieldAlert, ShieldCheck, Unplug } from 'lucide-react';
 import { showCaptureNotice, useCaptureProtection } from '../../lib/captureProtection';
 import { useUpdates } from '../../lib/updates';
 import type { TerminalTab } from '../../types';
@@ -23,6 +23,7 @@ interface StatusBarProps {
   onLock: () => void;
   onOpenSnippets: () => void;
   onOpenRecordings: () => void;
+  onOpenContainers: () => void;
   /** "Type in all panes" state for the visible tab. */
   broadcast: { enabled: boolean; count: number };
   onToggleBroadcast: () => void;
@@ -35,7 +36,7 @@ const LABEL: Record<TerminalTab['status'], string> = {
   disconnected: 'Disconnected',
 };
 
-export function StatusBar({ tab, size, sftpOpen, openTabs, onToggleSftp, onDisconnect, onReconnect, onOpenSecurity, onOpenUpdates, masking, onToggleMasking, lockConfigured, onLock, onOpenSnippets, onOpenRecordings, broadcast, onToggleBroadcast }: StatusBarProps) {
+export function StatusBar({ tab, size, sftpOpen, openTabs, onToggleSftp, onDisconnect, onReconnect, onOpenSecurity, onOpenUpdates, masking, onToggleMasking, lockConfigured, onLock, onOpenSnippets, onOpenRecordings, onOpenContainers, broadcast, onToggleBroadcast }: StatusBarProps) {
   const protection = useCaptureProtection();
   const update = useUpdates().result;
   const status = tab?.status;
@@ -56,6 +57,7 @@ export function StatusBar({ tab, size, sftpOpen, openTabs, onToggleSftp, onDisco
             <span className={`w-1.5 h-1.5 rounded-full ${dot}`} />
             {LABEL[tab.status]}
           </span>
+          {tab.stream && <span className="font-mono text-gray-500 truncate">{tab.stream.kind === 'telnet' ? `${tab.stream.host}:${tab.stream.port}` : `${tab.stream.device} · ${tab.stream.baud} ${tab.stream.dataBits}${tab.stream.parity[0].toUpperCase()}${tab.stream.stopBits}`}</span>}
           {tab.profile && (
             <span className="font-mono text-gray-500 truncate">
               {tab.profile.username}@{tab.profile.host}
@@ -69,7 +71,7 @@ export function StatusBar({ tab, size, sftpOpen, openTabs, onToggleSftp, onDisco
           )}
           {(status === 'disconnected' || status === 'idle') && (
             <button className="btn-ghost h-5 px-1.5 text-2xs text-accent hover:text-accent-hover" onClick={onReconnect}>
-              {tab.profile ? <RotateCw size={11} /> : <Plug size={11} />} {tab.profile ? 'Reconnect' : 'Connect'}
+              {tab.profile || tab.stream ? <RotateCw size={11} /> : <Plug size={11} />} {tab.profile || tab.stream ? 'Reconnect' : 'Connect'}
             </button>
           )}
         </>
@@ -146,10 +148,15 @@ export function StatusBar({ tab, size, sftpOpen, openTabs, onToggleSftp, onDisco
       )}
       {tab && <span>UTF-8</span>}
       {tab && <span>xterm-256color</span>}
-      {tab && status === 'connected' && <HostMonitor tab={tab} />}
+      {tab && status === 'connected' && tab.profile && <HostMonitor tab={tab} />}
+      {tab && status === 'connected' && tab.profile && (
+        <button className="flex items-center h-5 px-1.5 rounded-md transition-colors hover:bg-white/[0.06] hover:text-gray-300 flex-shrink-0" onClick={onOpenContainers} title="Containers: Docker, Podman, Kubernetes">
+          <Box size={11} />
+        </button>
+      )}
       {tab && status === 'connected' && <RecordButton tab={tab} onOpenLibrary={onOpenRecordings} />}
-      {tab && status === 'connected' && <TunnelsPopover tab={tab} />}
-      {status === 'connected' && (
+      {tab && status === 'connected' && tab.profile && <TunnelsPopover tab={tab} />}
+      {status === 'connected' && !tab?.stream && (
         <button
           className={`flex items-center gap-1 h-5 px-2 rounded-md transition-colors ${
             sftpOpen ? 'bg-accent/15 text-accent' : 'hover:bg-white/[0.06] hover:text-gray-300'

@@ -7,6 +7,8 @@ import (
 	"os"
 	"sync"
 	"sync/atomic"
+
+	"terminyxx/internal/recording"
 )
 
 type EventEmitter interface {
@@ -18,6 +20,7 @@ var ErrNotFound = errors.New("connection not found")
 type ConnectionManager struct {
 	mu          sync.RWMutex
 	connections map[string]*ManagedConnection
+	streams     map[string]*streamConn
 	emitter     EventEmitter
 	hostKeys    *HostKeyStore
 	gate        *OutputGate
@@ -34,6 +37,7 @@ type ConnectionManager struct {
 func NewConnectionManager(emitter EventEmitter, hostKeys *HostKeyStore) *ConnectionManager {
 	m := &ConnectionManager{
 		connections: make(map[string]*ManagedConnection),
+		streams:     make(map[string]*streamConn),
 		emitter:     emitter,
 		hostKeys:    hostKeys,
 		gate:        NewOutputGate(),
@@ -102,10 +106,15 @@ func (m *ConnectionManager) Connect(req ConnectRequest) error {
 
 	m.mu.Lock()
 	old := m.connections[req.ID]
+	oldStream := m.streams[req.ID]
+	delete(m.streams, req.ID)
 	m.connections[req.ID] = conn
 	m.mu.Unlock()
 	if old != nil {
 		_ = old.Close()
+	}
+	if oldStream != nil {
+		oldStream.close()
 	}
 
 	go func() {
@@ -136,7 +145,14 @@ func (m *ConnectionManager) Disconnect(id string) error {
 	m.mu.Lock()
 	conn, ok := m.connections[id]
 	delete(m.connections, id)
+	st := m.streams[id]
+	delete(m.streams, id)
 	m.mu.Unlock()
+	if st != nil {
+		st.close()
+		m.emitter.Emit("connection:state:"+id, "disconnected")
+		return nil
+	}
 	if !ok {
 		return nil
 	}
@@ -164,6 +180,11 @@ func (m *ConnectionManager) sftp(id string) (*SFTPBridge, error) {
 }
 
 func (m *ConnectionManager) StartShell(id string, cols, rows int) error {
+	if st := m.stream(id); st != nil {
+		st.resize(cols, rows)
+		st.start()
+		return nil
+	}
 	conn, err := m.get(id)
 	if err != nil {
 		return err
@@ -175,6 +196,9 @@ func (m *ConnectionManager) WriteInput(id, data string) error {
 	if m.gate.Locked() {
 		return ErrLocked
 	}
+	if st := m.stream(id); st != nil {
+		return st.write([]byte(data))
+	}
 	conn, err := m.get(id)
 	if err != nil {
 		return err
@@ -183,6 +207,10 @@ func (m *ConnectionManager) WriteInput(id, data string) error {
 }
 
 func (m *ConnectionManager) ResizePTY(id string, cols, rows int) error {
+	if st := m.stream(id); st != nil {
+		st.resize(cols, rows)
+		return nil
+	}
 	conn, err := m.get(id)
 	if err != nil {
 		return err
@@ -289,7 +317,12 @@ func (m *ConnectionManager) CloseAll() {
 	m.mu.Lock()
 	conns := m.connections
 	m.connections = make(map[string]*ManagedConnection)
+	streams := m.streams
+	m.streams = make(map[string]*streamConn)
 	m.mu.Unlock()
+	for _, st := range streams {
+		st.close()
+	}
 	for _, conn := range conns {
 		_ = conn.Close()
 	}
@@ -329,6 +362,23 @@ func (m *ConnectionManager) SetRecordingsDir(dir string) {
 
 // StartRecording records the session of connection id; it returns the file name.
 func (m *ConnectionManager) StartRecording(id, title string) (string, error) {
+	if st := m.stream(id); st != nil {
+		m.mu.RLock()
+		dir := m.recordingsDir
+		m.mu.RUnlock()
+		if dir == "" {
+			return "", errors.New("recordings folder is not configured")
+		}
+		if st.rec.Load() != nil {
+			return "", errors.New("already recording")
+		}
+		r, name, err := recording.Start(dir, title, 120, 30)
+		if err != nil {
+			return "", err
+		}
+		st.rec.Store(r)
+		return name, nil
+	}
 	conn, err := m.get(id)
 	if err != nil {
 		return "", err
@@ -343,6 +393,12 @@ func (m *ConnectionManager) StartRecording(id, title string) (string, error) {
 }
 
 func (m *ConnectionManager) StopRecording(id string) error {
+	if st := m.stream(id); st != nil {
+		if r := st.rec.Swap(nil); r != nil {
+			r.Close()
+		}
+		return nil
+	}
 	conn, err := m.get(id)
 	if err != nil {
 		return err
@@ -352,6 +408,9 @@ func (m *ConnectionManager) StopRecording(id string) error {
 }
 
 func (m *ConnectionManager) IsRecording(id string) bool {
+	if st := m.stream(id); st != nil {
+		return st.rec.Load() != nil
+	}
 	conn, err := m.get(id)
 	return err == nil && conn.Recording()
 }

@@ -98,6 +98,19 @@ export interface TerminalTab {
   /** Set once a shell has run in this tab, so the terminal stays mounted. */
   started: boolean;
   profile?: SSHProfile;
+  /** Telnet or serial session (no SSH profile). */
+  stream?: StreamSpec;
+}
+
+export interface StreamSpec {
+  kind: 'telnet' | 'serial';
+  host: string;
+  port: number;
+  device: string;
+  baud: number;
+  dataBits: number;
+  parity: string;
+  stopBits: string;
 }
 
 export interface TransferProgress {
