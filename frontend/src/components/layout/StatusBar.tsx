@@ -3,6 +3,8 @@ import { showCaptureNotice, useCaptureProtection } from '../../lib/captureProtec
 import { useUpdates } from '../../lib/updates';
 import type { TerminalTab } from '../../types';
 import { TunnelsPopover } from '../terminal/TunnelsPopover';
+import { RecordButton } from '../recordings/RecordButton';
+import { HostMonitor } from './HostMonitor';
 
 interface StatusBarProps {
   tab: TerminalTab | null;
@@ -20,6 +22,7 @@ interface StatusBarProps {
   lockConfigured: boolean;
   onLock: () => void;
   onOpenSnippets: () => void;
+  onOpenRecordings: () => void;
   /** "Type in all panes" state for the visible tab. */
   broadcast: { enabled: boolean; count: number };
   onToggleBroadcast: () => void;
@@ -32,7 +35,7 @@ const LABEL: Record<TerminalTab['status'], string> = {
   disconnected: 'Disconnected',
 };
 
-export function StatusBar({ tab, size, sftpOpen, openTabs, onToggleSftp, onDisconnect, onReconnect, onOpenSecurity, onOpenUpdates, masking, onToggleMasking, lockConfigured, onLock, onOpenSnippets, broadcast, onToggleBroadcast }: StatusBarProps) {
+export function StatusBar({ tab, size, sftpOpen, openTabs, onToggleSftp, onDisconnect, onReconnect, onOpenSecurity, onOpenUpdates, masking, onToggleMasking, lockConfigured, onLock, onOpenSnippets, onOpenRecordings, broadcast, onToggleBroadcast }: StatusBarProps) {
   const protection = useCaptureProtection();
   const update = useUpdates().result;
   const status = tab?.status;
@@ -143,6 +146,8 @@ export function StatusBar({ tab, size, sftpOpen, openTabs, onToggleSftp, onDisco
       )}
       {tab && <span>UTF-8</span>}
       {tab && <span>xterm-256color</span>}
+      {tab && status === 'connected' && <HostMonitor tab={tab} />}
+      {tab && status === 'connected' && <RecordButton tab={tab} onOpenLibrary={onOpenRecordings} />}
       {tab && status === 'connected' && <TunnelsPopover tab={tab} />}
       {status === 'connected' && (
         <button

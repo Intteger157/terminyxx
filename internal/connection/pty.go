@@ -7,6 +7,7 @@ import (
 
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
+	"terminyxx/internal/recording"
 )
 
 // ptyOptions are the connection-level settings a shell session needs.
@@ -17,6 +18,8 @@ type ptyOptions struct {
 	mask func() MaskOptions
 	// forwardAgent requests agent forwarding for the session.
 	forwardAgent bool
+	// recorder returns the active session recording, or nil.
+	recorder func() *recording.Recorder
 }
 
 type PTYSession struct {
@@ -97,7 +100,15 @@ func NewPTYSession(client *ssh.Client, emitter EventEmitter, connID string, cols
 	}
 
 	var emitMu sync.Mutex
-	raw := func(s string) { send("terminal:output:"+connID, s) }
+	raw := func(s string) {
+		// Record what the terminal shows (after masking), not what the server sent.
+		if opts.recorder != nil {
+			if r := opts.recorder(); r != nil {
+				r.Output(s)
+			}
+		}
+		send("terminal:output:"+connID, s)
+	}
 	var masker *OutputMasker
 	if opts.mask != nil {
 		masker = NewOutputMasker(opts.mask, raw)

@@ -3,10 +3,11 @@
 import {updater} from '../models';
 import {security} from '../models';
 import {capture} from '../models';
+import {connection} from '../models';
 import {store} from '../models';
 import {importers} from '../models';
-import {connection} from '../models';
 import {rdp} from '../models';
+import {recording} from '../models';
 
 export function AppVersion():Promise<string>;
 
@@ -18,9 +19,13 @@ export function DeleteFolder(arg1:string):Promise<void>;
 
 export function DeleteRDPProfile(arg1:string):Promise<void>;
 
+export function DeleteRecording(arg1:string):Promise<void>;
+
 export function DeleteSSHProfile(arg1:string):Promise<void>;
 
 export function DeleteSnippet(arg1:string):Promise<void>;
+
+export function ExportSync(arg1:string,arg2:boolean):Promise<string>;
 
 export function GetBiometrics():Promise<security.BiometricInfo>;
 
@@ -34,6 +39,12 @@ export function GetScreenSharing():Promise<capture.SharingState>;
 
 export function GetSettings():Promise<string>;
 
+export function HostStats(arg1:string):Promise<connection.HostStats>;
+
+export function ImportSync(arg1:string):Promise<store.ImportResult>;
+
+export function IsRecording(arg1:string):Promise<boolean>;
+
 export function LaunchRDP(arg1:string):Promise<void>;
 
 export function ListFolders():Promise<Array<store.Folder>>;
@@ -43,6 +54,8 @@ export function ListImportSources():Promise<Array<importers.SourceInfo>>;
 export function ListLocalDir(arg1:string):Promise<Array<connection.FileEntry>>;
 
 export function ListRDPProfiles():Promise<Array<rdp.RDPProfile>>;
+
+export function ListRecordings():Promise<Array<recording.Info>>;
 
 export function ListSSHProfiles():Promise<Array<store.SSHProfile>>;
 
@@ -64,11 +77,15 @@ export function LockApp():Promise<boolean>;
 
 export function MoveItem(arg1:string,arg2:string,arg3:string,arg4:number):Promise<void>;
 
+export function OpenRecordingsFolder():Promise<void>;
+
 export function PickImportPaths(arg1:string):Promise<Array<string>>;
 
 export function ReadImport(arg1:string,arg2:Array<string>):Promise<importers.Result>;
 
 export function ReadLocalFile(arg1:string):Promise<string>;
+
+export function ReadRecording(arg1:string):Promise<recording.Recording>;
 
 export function RemoveTrustedHost(arg1:string):Promise<void>;
 
@@ -106,6 +123,8 @@ export function SaveSettings(arg1:string):Promise<void>;
 
 export function SaveSnippet(arg1:store.Snippet):Promise<void>;
 
+export function SearchRecordings(arg1:string):Promise<Array<recording.Hit>>;
+
 export function SelectFolder():Promise<string>;
 
 export function SelectKeyFile():Promise<string>;
@@ -114,7 +133,11 @@ export function SetCaptureProtection(arg1:boolean):Promise<void>;
 
 export function SetMasterPassword(arg1:string,arg2:string):Promise<void>;
 
+export function StartRecording(arg1:string,arg2:string):Promise<string>;
+
 export function StartTunnel(arg1:string,arg2:connection.TunnelSpec):Promise<connection.TunnelInfo>;
+
+export function StopRecording(arg1:string):Promise<void>;
 
 export function StopTunnel(arg1:string,arg2:string):Promise<void>;
 

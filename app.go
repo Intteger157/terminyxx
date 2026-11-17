@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -15,8 +16,10 @@ import (
 	"terminyxx/internal/connection"
 	"terminyxx/internal/importers"
 	"terminyxx/internal/rdp"
+	"terminyxx/internal/recording"
 	"terminyxx/internal/security"
 	"terminyxx/internal/store"
+	"terminyxx/internal/syncfile"
 )
 
 type WailsEmitter struct {
@@ -34,6 +37,8 @@ type App struct {
 	rdp     rdp.Launcher
 	stop    chan struct{}
 	sec     securityState
+
+	recordingsDir string
 }
 
 func NewApp() *App {
@@ -56,6 +61,11 @@ func (a *App) startup(ctx context.Context) {
 	}
 	hostKeys := connection.NewHostKeyStore(knownHosts, connection.DefaultUserKnownHosts())
 	a.connMgr = connection.NewConnectionManager(&WailsEmitter{ctx: ctx}, hostKeys)
+	a.recordingsDir = "recordings"
+	if dir, err := store.DataDir(); err == nil {
+		a.recordingsDir = filepath.Join(dir, "recordings")
+	}
+	a.connMgr.SetRecordingsDir(a.recordingsDir)
 	a.rdp = rdp.NewLauncher()
 
 	a.stop = make(chan struct{})
@@ -180,6 +190,130 @@ func (a *App) autoStartTunnels(req connection.ConnectRequest) {
 			log.Printf("tunnel %s: %v", t.ID, err)
 		}
 	}
+}
+
+// HostStats reads CPU, memory, disk, load and network of a Linux server
+// over a separate SSH exec channel.
+func (a *App) HostStats(id string) (connection.HostStats, error) {
+	return a.connMgr.HostStats(id)
+}
+
+// Session recording bindings
+
+func (a *App) StartRecording(id, title string) (string, error) {
+	if a.sec.lock != nil && a.sec.lock.Locked() {
+		return "", connection.ErrLocked
+	}
+	return a.connMgr.StartRecording(id, title)
+}
+
+func (a *App) StopRecording(id string) error { return a.connMgr.StopRecording(id) }
+
+func (a *App) IsRecording(id string) bool { return a.connMgr.IsRecording(id) }
+
+func (a *App) ListRecordings() ([]recording.Info, error) {
+	if a.sec.lock != nil && a.sec.lock.Locked() {
+		return nil, connection.ErrLocked
+	}
+	return recording.List(a.recordingsDir)
+}
+
+func (a *App) ReadRecording(name string) (recording.Recording, error) {
+	if a.sec.lock != nil && a.sec.lock.Locked() {
+		return recording.Recording{}, connection.ErrLocked
+	}
+	return recording.Read(a.recordingsDir, name)
+}
+
+func (a *App) DeleteRecording(name string) error { return recording.Delete(a.recordingsDir, name) }
+
+func (a *App) SearchRecordings(query string) ([]recording.Hit, error) {
+	if a.sec.lock != nil && a.sec.lock.Locked() {
+		return nil, connection.ErrLocked
+	}
+	return recording.Search(a.recordingsDir, query, 200)
+}
+
+// OpenRecordingsFolder shows the recordings in the file manager.
+func (a *App) OpenRecordingsFolder() error {
+	if err := os.MkdirAll(a.recordingsDir, 0o700); err != nil {
+		return err
+	}
+	runtime.BrowserOpenURL(a.ctx, a.recordingsDir)
+	return nil
+}
+
+// Sync file bindings
+
+// ExportSync writes hosts, folders and snippets to a passphrase-encrypted
+// file chosen by the user (e.g. inside a cloud-synced folder). It returns the
+// path, or "" if the user cancelled.
+func (a *App) ExportSync(passphrase string, includePasswords bool) (string, error) {
+	if a.data == nil {
+		return "", errors.New("storage is unavailable")
+	}
+	if a.sec.lock != nil && a.sec.lock.Locked() {
+		return "", connection.ErrLocked
+	}
+	if len(passphrase) < 8 {
+		return "", errors.New("passphrase must be at least 8 characters")
+	}
+	path, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
+		Title:           "Save encrypted sync file",
+		DefaultFilename: "terminyxx.sync",
+		Filters:         []runtime.FileFilter{{DisplayName: "Terminyxx sync file", Pattern: "*.sync"}},
+	})
+	if err != nil || path == "" {
+		return "", err
+	}
+	bundle, err := a.data.ExportBundle(includePasswords)
+	if err != nil {
+		return "", err
+	}
+	plain, err := json.Marshal(bundle)
+	if err != nil {
+		return "", err
+	}
+	sealed, err := syncfile.Seal(plain, passphrase)
+	if err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(path, sealed, 0o600); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+// ImportSync merges a sync file into the local data. Items with the same ID
+// are replaced; nothing is deleted.
+func (a *App) ImportSync(passphrase string) (store.ImportResult, error) {
+	var res store.ImportResult
+	if a.data == nil {
+		return res, errors.New("storage is unavailable")
+	}
+	if a.sec.lock != nil && a.sec.lock.Locked() {
+		return res, connection.ErrLocked
+	}
+	path, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
+		Title:   "Open encrypted sync file",
+		Filters: []runtime.FileFilter{{DisplayName: "Terminyxx sync file", Pattern: "*.sync"}, {DisplayName: "All files", Pattern: "*.*"}},
+	})
+	if err != nil || path == "" {
+		return res, err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return res, err
+	}
+	plain, err := syncfile.Open(data, passphrase)
+	if err != nil {
+		return res, err
+	}
+	var bundle store.Bundle
+	if err := json.Unmarshal(plain, &bundle); err != nil {
+		return res, fmt.Errorf("sync file is damaged: %w", err)
+	}
+	return a.data.ImportBundle(bundle)
 }
 
 // Snippet bindings

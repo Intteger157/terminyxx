@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { ReactNode } from 'react';
-import { ArrowDown, ArrowUp, Check, Download, Highlighter, Info, Loader2, RefreshCw, Keyboard, Palette, Pencil, Plus, RotateCcw, ShieldCheck, SquareTerminal, Trash2, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, Check, Download, Highlighter, Info, Loader2, RefreshCw, Keyboard, Palette, Pencil, Plus, RotateCcw, ShieldCheck, CloudUpload, SquareTerminal, Trash2, X } from 'lucide-react';
 import { Modal } from '../ui/Dialogs';
 import { Select } from '../ui/Select';
 import { TerminalPreview } from './TerminalPreview';
@@ -10,17 +10,19 @@ import { THEMES, themeById } from '../../lib/themes';
 import type { TerminalTheme } from '../../lib/themes';
 import { compileRule } from '../../lib/highlight';
 import { SecuritySection } from './SecuritySection';
+import { SyncSection } from './SyncSection';
 import { BrowserOpenURL } from '../../../wailsjs/runtime/runtime';
 import { checkForUpdate, useUpdates } from '../../lib/updates';
 import { parseReleaseNotes } from '../../lib/releaseNotes';
 
-export type SettingsSection = 'appearance' | 'terminal' | 'highlight' | 'security' | 'shortcuts' | 'about';
+export type SettingsSection = 'appearance' | 'terminal' | 'highlight' | 'security' | 'sync' | 'shortcuts' | 'about';
 
 const SECTIONS: { id: SettingsSection; label: string; icon: ReactNode }[] = [
   { id: 'appearance', label: 'Appearance', icon: <Palette size={15} /> },
   { id: 'terminal', label: 'Terminal', icon: <SquareTerminal size={15} /> },
   { id: 'highlight', label: 'Highlighting', icon: <Highlighter size={15} /> },
   { id: 'security', label: 'Security', icon: <ShieldCheck size={15} /> },
+  { id: 'sync', label: 'Sync', icon: <CloudUpload size={15} /> },
   { id: 'shortcuts', label: 'Shortcuts', icon: <Keyboard size={15} /> },
   { id: 'about', label: 'About', icon: <Info size={15} /> },
 ];
@@ -51,6 +53,7 @@ export function SettingsDialog({ modKey, initial = 'appearance', onClose }: { mo
           {section === 'terminal' && <TerminalSection settings={settings} />}
           {section === 'highlight' && <HighlightSection settings={settings} />}
           {section === 'security' && <SecuritySection settings={settings} modKey={modKey} />}
+          {section === 'sync' && <SyncSection />}
           {section === 'shortcuts' && <ShortcutsSection modKey={modKey} />}
           {section === 'about' && <AboutSection settings={settings} />}
         </div>

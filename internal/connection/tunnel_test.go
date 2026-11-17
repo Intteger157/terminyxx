@@ -4,8 +4,11 @@ import (
 	"io"
 	"net"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
+
+	"terminyxx/internal/recording"
 )
 
 // echoServer accepts connections and echoes with an "echo:" prefix.
@@ -171,5 +174,47 @@ func TestProxyJump(t *testing.T) {
 	}
 	if err := m.StartShell("viajump", 80, 24); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestRecordingCapturesOutput(t *testing.T) {
+	m, id := connected(t)
+	m.SetRecordingsDir(t.TempDir())
+	if err := m.StartShell(id, 100, 30); err != nil {
+		t.Fatal(err)
+	}
+	name, err := m.StartRecording(id, "u@test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.StartRecording(id, "again"); err == nil {
+		t.Fatal("second recording accepted")
+	}
+	if !m.IsRecording(id) {
+		t.Fatal("not recording")
+	}
+	if err := m.WriteInput(id, "ping\r"); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	var found bool
+	for time.Now().Before(deadline) && !found {
+		time.Sleep(50 * time.Millisecond)
+		rec, err := recording.Read(m.recordingsDir, name)
+		if err != nil {
+			continue
+		}
+		for _, e := range rec.Events {
+			if e.Kind == "o" && strings.Contains(e.Data, "out:ping") {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Fatal("shell output was not recorded")
+	}
+	_ = m.StopRecording(id)
+	if m.IsRecording(id) {
+		t.Fatal("still recording after stop")
 	}
 }

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Columns2, Copy, EyeOff, ScrollText, FolderPlus, FolderTree, Loader2, Lock, Monitor, PanelLeft, Plus, RotateCw, Rows2, Server, Settings, ShieldCheck, SquareArrowOutUpRight, SquareTerminal, Unplug, Upload, X } from 'lucide-react';
+import { Circle, Columns2, Copy, EyeOff, ScrollText, FolderPlus, FolderTree, Loader2, Lock, Monitor, PanelLeft, Plus, RotateCw, Rows2, Server, Settings, ShieldCheck, SquareArrowOutUpRight, SquareTerminal, Unplug, Upload, X } from 'lucide-react';
 import { Sidebar, MAX_WIDTH, MIN_WIDTH } from './components/sidebar/Sidebar';
 import { ImportDialog } from './components/sidebar/ImportDialog';
 import { useHostLibrary } from './components/sidebar/useHostLibrary';
@@ -18,6 +18,7 @@ import { contains, insertPane, neighbor, paneIds, removePane, setSizes as setSpl
 import type { Side, TabGroup } from './lib/layout';
 import { setBroadcastPanes, toggleBroadcast, useBroadcast } from './lib/broadcast';
 import { SnippetsDialog } from './components/snippets/SnippetsDialog';
+import { RecordingsDialog } from './components/recordings/RecordingsDialog';
 import type { PaneDrag } from './lib/paneDrag';
 import { ConnectDialog } from './components/terminal/ConnectDialog';
 import { SftpPanel } from './components/sftp/SftpPanel';
@@ -70,6 +71,7 @@ function App() {
   const [rdpDialog, setRdpDialog] = useState<{ key: number; initial?: Partial<RDPProfile> } | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [snippetsOpen, setSnippetsOpen] = useState(false);
+  const [recordingsOpen, setRecordingsOpen] = useState(false);
   const broadcast = useBroadcast();
   const [settingsOpen, setSettingsOpen] = useState<SettingsSection | null>(null);
   const [sidebar, setSidebar] = useState<SidebarPref>(readSidebarPref);
@@ -88,6 +90,12 @@ function App() {
   const dialogKey = useRef(0);
   const lock = useAppLock();
   const masking = useSettings().security.masking.enabled;
+
+  useEffect(() => {
+    const onChanged = () => void loadProfiles();
+    window.addEventListener('terminyxx:library-changed', onChanged);
+    return () => window.removeEventListener('terminyxx:library-changed', onChanged);
+  }, [loadProfiles]);
 
   useEffect(() => {
     setClipboardNotifier((s) => dialogs.toast(`Copied. The clipboard will be cleared in ${s} s.`));
@@ -520,6 +528,8 @@ function App() {
     { id: 'lock', group: 'Actions', label: 'Lock Terminyxx', icon: <Lock size={14} />, keywords: 'lock away privacy master password', shortcut: [mod, '⇧', 'L'], run: () => void lockApp() },
     { id: 'mask', group: 'Actions', label: masking ? 'Stop masking secrets' : 'Mask secrets in terminal output', icon: <EyeOff size={14} />, keywords: 'presentation streamer mode hide password token redact', shortcut: [mod, '⇧', 'M'], run: toggleMasking },
     { id: 'trusted', group: 'Actions', label: 'Trusted hosts (known_hosts)', icon: <ShieldCheck size={14} />, keywords: 'host key fingerprint known_hosts revoke', run: () => setSettingsOpen('security') },
+    { id: 'sync', group: 'Actions', label: 'Encrypted sync file (export / import hosts)', icon: <Settings size={14} />, keywords: 'backup restore transfer migrate cloud dropbox', run: () => setSettingsOpen('sync') },
+    { id: 'recordings', group: 'Actions', label: 'Session recordings', icon: <Circle size={14} />, keywords: 'record replay playback history log search asciinema', run: () => setRecordingsOpen(true) },
     { id: 'snippets', group: 'Actions', label: 'Snippets', icon: <ScrollText size={14} />, keywords: 'commands macros saved scripts run', shortcut: [mod, '⇧', 'S'], run: () => setSnippetsOpen(true) },
     ...(isSplit
       ? [{ id: 'broadcast', group: 'Actions', label: broadcast.enabled ? 'Stop typing in all panes' : 'Type in all panes', icon: <Copy size={14} />, keywords: 'broadcast multi input sync panes', shortcut: [mod, '⇧', 'G'], run: toggleBroadcast } as PaletteItem]
@@ -664,6 +674,7 @@ function App() {
         lockConfigured={lock.configured}
         onLock={() => void lockApp()}
         onOpenSnippets={() => setSnippetsOpen(true)}
+        onOpenRecordings={() => setRecordingsOpen(true)}
         broadcast={broadcast}
         onToggleBroadcast={toggleBroadcast}
       />
@@ -681,6 +692,8 @@ function App() {
           onConnect={handleDialogConnect}
         />
       )}
+
+      {recordingsOpen && <RecordingsDialog onClose={() => setRecordingsOpen(false)} />}
 
       {snippetsOpen && (
         <SnippetsDialog

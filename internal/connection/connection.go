@@ -8,10 +8,12 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
+	"terminyxx/internal/recording"
 )
 
 const (
@@ -38,6 +40,11 @@ type ManagedConnection struct {
 	agentConn io.Closer
 
 	tunnelSet *tunnelSet
+
+	rec        atomic.Pointer[recording.Recorder]
+	monitor    monitorState
+	sizeMu     sync.Mutex
+	cols, rows int // last known terminal size, for new recordings
 	// jumps are the intermediate SSH clients of a ProxyJump chain, closed
 	// together with the connection.
 	jumps []*ssh.Client
@@ -231,10 +238,12 @@ func (c *ManagedConnection) StartShell(cols, rows int) error {
 		return errors.New("not connected")
 	}
 	if c.pty != nil {
+		c.noteSize(cols, rows)
 		return c.pty.Resize(cols, rows)
 	}
+	c.noteSize(cols, rows)
 	client := c.client
-	opts := ptyOptions{gate: c.gate, mask: c.mask, forwardAgent: c.agentConn != nil}
+	opts := ptyOptions{gate: c.gate, mask: c.mask, forwardAgent: c.agentConn != nil, recorder: c.rec.Load}
 	pty, err := NewPTYSession(client, c.emitter, c.ID, cols, rows, opts, func() {
 		// Shell exited (e.g. `exit`): drop the whole connection.
 		_ = client.Close()
@@ -264,6 +273,7 @@ func (c *ManagedConnection) ResizePTY(cols, rows int) error {
 	if pty == nil {
 		return nil
 	}
+	c.noteSize(cols, rows)
 	return pty.Resize(cols, rows)
 }
 
@@ -288,6 +298,7 @@ func (c *ManagedConnection) SFTP() (*SFTPBridge, error) {
 
 func (c *ManagedConnection) Close() error {
 	c.once.Do(func() { close(c.stop) })
+	c.StopRecording()
 	c.closeTunnels()
 
 	c.mu.Lock()
@@ -316,3 +327,50 @@ func (c *ManagedConnection) Close() error {
 	}
 	return nil
 }
+
+// noteSize remembers the terminal size and logs it into a running recording.
+// The caller may hold c.mu, so the size fields are only touched atomically
+// through the recorder pointer and a small separate lock-free update.
+func (c *ManagedConnection) noteSize(cols, rows int) {
+	if cols <= 0 || rows <= 0 {
+		return
+	}
+	c.sizeMu.Lock()
+	changed := c.cols != cols || c.rows != rows
+	c.cols, c.rows = cols, rows
+	c.sizeMu.Unlock()
+	if changed {
+		if r := c.rec.Load(); r != nil {
+			r.Resize(cols, rows)
+		}
+	}
+}
+
+// StartRecording begins saving the session to dir and returns the file name.
+func (c *ManagedConnection) StartRecording(dir, title string) (string, error) {
+	if c.rec.Load() != nil {
+		return "", errors.New("already recording")
+	}
+	c.sizeMu.Lock()
+	cols, rows := c.cols, c.rows
+	c.sizeMu.Unlock()
+	r, name, err := recording.Start(dir, title, cols, rows)
+	if err != nil {
+		return "", err
+	}
+	if !c.rec.CompareAndSwap(nil, r) {
+		r.Close()
+		return "", errors.New("already recording")
+	}
+	return name, nil
+}
+
+// StopRecording ends the recording, if any.
+func (c *ManagedConnection) StopRecording() {
+	if r := c.rec.Swap(nil); r != nil {
+		r.Close()
+	}
+}
+
+// Recording reports whether the session is being recorded.
+func (c *ManagedConnection) Recording() bool { return c.rec.Load() != nil }

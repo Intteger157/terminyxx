@@ -318,7 +318,7 @@ const modKeyLabel = /Mac/i.test(navigator.platform) ? '⌘' : 'Ctrl';
 // Ctrl/Cmd+Shift+<key> combos the app handles; xterm must not consume them.
 const APP_KEYS = ['KeyF', 'KeyP', 'KeyT', 'KeyW', 'KeyB', 'KeyD', 'KeyE', 'KeyL', 'KeyM'];
 
-function terminalOptions(s: AppSettings) {
+export function terminalOptions(s: AppSettings) {
   const theme = themeById(s.appearance.themeId);
   return {
     theme: theme.colors,
