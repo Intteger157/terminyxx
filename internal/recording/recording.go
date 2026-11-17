@@ -136,9 +136,11 @@ type Recording struct {
 	Events []Event `json:"events"`
 }
 
-// validName accepts only plain file names that are .cast files.
+// validName accepts only plain file names that are .cast files. A backslash
+// is rejected on every OS: it separates paths on Windows and recordings never
+// contain one.
 func validName(name string) bool {
-	return name != "" && name == filepath.Base(name) && strings.HasSuffix(name, ext) && !strings.HasPrefix(name, ".")
+	return name != "" && name == filepath.Base(name) && !strings.ContainsAny(name, `/\`) && strings.HasSuffix(name, ext) && !strings.HasPrefix(name, ".")
 }
 
 func readFile(path string) (Recording, error) {
