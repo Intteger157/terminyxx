@@ -30,7 +30,7 @@ import { SftpPanel } from './components/sftp/SftpPanel';
 import { RdpDialog } from './components/rdp/RdpDialog';
 import { SettingsDialog } from './components/settings/SettingsDialog';
 import type { SettingsSection } from './components/settings/SettingsDialog';
-import { useDialogs, errorText } from './components/ui/Dialogs';
+import { useDialogs, errorText, modalSwap } from './components/ui/Dialogs';
 import { checkForUpdate, loadVersion } from './lib/updates';
 import { useHotkeys } from './hooks/useHotkeys';
 import { ConnectCancelled, connectWithPrompts } from './lib/connect';
@@ -744,6 +744,7 @@ function App() {
             connectDialog.tabId
               ? undefined
               : ({ host, folderId }) => {
+                  modalSwap.pending = true;
                   setConnectDialog(null);
                   openRdpDialog({ host, folderId: folderId || undefined });
                 }
@@ -788,6 +789,7 @@ function App() {
           onClose={() => setRdpDialog(null)}
           onSave={handleSaveRDP}
           onSwitchToSsh={({ host, folderId }) => {
+            modalSwap.pending = true;
             setRdpDialog(null);
             openConnectDialog(null, { host, folderId: folderId || undefined });
           }}

@@ -124,6 +124,9 @@ export function DialogProvider({ children }: { children: ReactNode }) {
   );
 }
 
+/** Set right before swapping one dialog for another so the new one appears without replaying the entrance animation. */
+export const modalSwap = { pending: false };
+
 export function Modal({
   title,
   subtitle,
@@ -139,6 +142,11 @@ export function Modal({
   onClose: () => void;
   width?: string;
 }) {
+  const [still] = useState(() => {
+    const v = modalSwap.pending;
+    modalSwap.pending = false;
+    return v;
+  });
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
@@ -153,11 +161,11 @@ export function Modal({
 
   return (
     <div
-      className="fixed inset-0 z-[60] flex items-center justify-center p-6 bg-black/50 backdrop-blur-[3px] animate-fade-in"
+      className="fixed inset-0 z-[60] flex items-center justify-center p-6 bg-black/50 backdrop-blur-[3px] ${still ? '' : 'animate-fade-in'}"
       onMouseDown={onClose}
     >
       <div
-        className={`w-full ${width} max-h-full flex flex-col rounded-2xl bg-surface-raised/95 backdrop-blur-xl shadow-pop animate-pop-in`}
+        className={`w-full ${width} max-h-full flex flex-col rounded-2xl bg-surface-raised/95 backdrop-blur-xl shadow-pop ${still ? '' : 'animate-pop-in'}`}
         onMouseDown={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
