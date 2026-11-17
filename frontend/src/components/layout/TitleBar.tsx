@@ -1,5 +1,5 @@
 import { useRef } from 'react';
-import { Minus, PanelLeft, Plus, Search, Settings, Square, X } from 'lucide-react';
+import { House, Minus, PanelLeft, Search, Settings, Square, X } from 'lucide-react';
 import { Quit, WindowMinimise, WindowToggleMaximise } from '../../../wailsjs/runtime/runtime';
 import type { TerminalTab } from '../../types';
 import { hostColor, modKey } from '../../lib/hosts';
@@ -209,10 +209,10 @@ export function TitleBar({
         <button
           className={`icon-btn flex-shrink-0 ${activeTabId === null && groups.length > 0 ? 'bg-white/[0.07] text-gray-100' : ''}`}
           onClick={onHome}
-          title="New tab"
-          aria-label="New tab"
+          title="Home"
+          aria-label="Home"
         >
-          <Plus size={15} />
+          <House size={15} />
         </button>
       </nav>
 
