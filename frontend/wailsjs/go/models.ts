@@ -103,6 +103,44 @@ export namespace connection {
 	        this.modTime = source["modTime"];
 	    }
 	}
+	export class HostStats {
+	    cpuPercent: number;
+	    cores: number;
+	    load1: number;
+	    load5: number;
+	    load15: number;
+	    memTotal: number;
+	    memUsed: number;
+	    swapTotal: number;
+	    swapUsed: number;
+	    diskTotal: number;
+	    diskUsed: number;
+	    uptimeSec: number;
+	    rxPerSec: number;
+	    txPerSec: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new HostStats(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.cpuPercent = source["cpuPercent"];
+	        this.cores = source["cores"];
+	        this.load1 = source["load1"];
+	        this.load5 = source["load5"];
+	        this.load15 = source["load15"];
+	        this.memTotal = source["memTotal"];
+	        this.memUsed = source["memUsed"];
+	        this.swapTotal = source["swapTotal"];
+	        this.swapUsed = source["swapUsed"];
+	        this.diskTotal = source["diskTotal"];
+	        this.diskUsed = source["diskUsed"];
+	        this.uptimeSec = source["uptimeSec"];
+	        this.rxPerSec = source["rxPerSec"];
+	        this.txPerSec = source["txPerSec"];
+	    }
+	}
 	export class TransferRequest {
 	    jobId: string;
 	    direction: string;
@@ -406,6 +444,103 @@ export namespace rdp {
 
 }
 
+export namespace recording {
+	
+	export class Event {
+	    time: number;
+	    kind: string;
+	    data: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Event(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.time = source["time"];
+	        this.kind = source["kind"];
+	        this.data = source["data"];
+	    }
+	}
+	export class Hit {
+	    name: string;
+	    title: string;
+	    time: number;
+	    line: string;
+	    startedAt: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new Hit(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.title = source["title"];
+	        this.time = source["time"];
+	        this.line = source["line"];
+	        this.startedAt = source["startedAt"];
+	    }
+	}
+	export class Info {
+	    name: string;
+	    title: string;
+	    startedAt: number;
+	    duration: number;
+	    size: number;
+	    cols: number;
+	    rows: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new Info(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.title = source["title"];
+	        this.startedAt = source["startedAt"];
+	        this.duration = source["duration"];
+	        this.size = source["size"];
+	        this.cols = source["cols"];
+	        this.rows = source["rows"];
+	    }
+	}
+	export class Recording {
+	    info: Info;
+	    events: Event[];
+	
+	    static createFrom(source: any = {}) {
+	        return new Recording(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.info = this.convertValues(source["info"], Info);
+	        this.events = this.convertValues(source["events"], Event);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+
+}
+
 export namespace security {
 	
 	export class BiometricInfo {
@@ -463,6 +598,22 @@ export namespace store {
 	        this.parentId = source["parentId"];
 	        this.color = source["color"];
 	        this.sortOrder = source["sortOrder"];
+	    }
+	}
+	export class ImportResult {
+	    folders: number;
+	    hosts: number;
+	    snippets: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ImportResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.folders = source["folders"];
+	        this.hosts = source["hosts"];
+	        this.snippets = source["snippets"];
 	    }
 	}
 	export class Tunnel {

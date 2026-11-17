@@ -22,12 +22,20 @@ export function DeleteRDPProfile(arg1) {
   return window['go']['main']['App']['DeleteRDPProfile'](arg1);
 }
 
+export function DeleteRecording(arg1) {
+  return window['go']['main']['App']['DeleteRecording'](arg1);
+}
+
 export function DeleteSSHProfile(arg1) {
   return window['go']['main']['App']['DeleteSSHProfile'](arg1);
 }
 
 export function DeleteSnippet(arg1) {
   return window['go']['main']['App']['DeleteSnippet'](arg1);
+}
+
+export function ExportSync(arg1, arg2) {
+  return window['go']['main']['App']['ExportSync'](arg1, arg2);
 }
 
 export function GetBiometrics() {
@@ -54,6 +62,18 @@ export function GetSettings() {
   return window['go']['main']['App']['GetSettings']();
 }
 
+export function HostStats(arg1) {
+  return window['go']['main']['App']['HostStats'](arg1);
+}
+
+export function ImportSync(arg1) {
+  return window['go']['main']['App']['ImportSync'](arg1);
+}
+
+export function IsRecording(arg1) {
+  return window['go']['main']['App']['IsRecording'](arg1);
+}
+
 export function LaunchRDP(arg1) {
   return window['go']['main']['App']['LaunchRDP'](arg1);
 }
@@ -72,6 +92,10 @@ export function ListLocalDir(arg1) {
 
 export function ListRDPProfiles() {
   return window['go']['main']['App']['ListRDPProfiles']();
+}
+
+export function ListRecordings() {
+  return window['go']['main']['App']['ListRecordings']();
 }
 
 export function ListSSHProfiles() {
@@ -114,6 +138,10 @@ export function MoveItem(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['MoveItem'](arg1, arg2, arg3, arg4);
 }
 
+export function OpenRecordingsFolder() {
+  return window['go']['main']['App']['OpenRecordingsFolder']();
+}
+
 export function PickImportPaths(arg1) {
   return window['go']['main']['App']['PickImportPaths'](arg1);
 }
@@ -124,6 +152,10 @@ export function ReadImport(arg1, arg2) {
 
 export function ReadLocalFile(arg1) {
   return window['go']['main']['App']['ReadLocalFile'](arg1);
+}
+
+export function ReadRecording(arg1) {
+  return window['go']['main']['App']['ReadRecording'](arg1);
 }
 
 export function RemoveTrustedHost(arg1) {
@@ -198,6 +230,10 @@ export function SaveSnippet(arg1) {
   return window['go']['main']['App']['SaveSnippet'](arg1);
 }
 
+export function SearchRecordings(arg1) {
+  return window['go']['main']['App']['SearchRecordings'](arg1);
+}
+
 export function SelectFolder() {
   return window['go']['main']['App']['SelectFolder']();
 }
@@ -214,8 +250,16 @@ export function SetMasterPassword(arg1, arg2) {
   return window['go']['main']['App']['SetMasterPassword'](arg1, arg2);
 }
 
+export function StartRecording(arg1, arg2) {
+  return window['go']['main']['App']['StartRecording'](arg1, arg2);
+}
+
 export function StartTunnel(arg1, arg2) {
   return window['go']['main']['App']['StartTunnel'](arg1, arg2);
+}
+
+export function StopRecording(arg1) {
+  return window['go']['main']['App']['StopRecording'](arg1);
 }
 
 export function StopTunnel(arg1, arg2) {

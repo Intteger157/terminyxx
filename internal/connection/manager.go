@@ -23,6 +23,8 @@ type ConnectionManager struct {
 	gate        *OutputGate
 	policy      atomic.Pointer[Policy]
 
+	recordingsDir string
+
 	jobsMu sync.Mutex
 	jobs   map[string]context.CancelFunc
 }
@@ -316,4 +318,40 @@ func (m *ConnectionManager) ListTunnels(id string) ([]TunnelInfo, error) {
 		return []TunnelInfo{}, nil
 	}
 	return conn.Tunnels(), nil
+}
+
+// SetRecordingsDir sets where session recordings are written.
+func (m *ConnectionManager) SetRecordingsDir(dir string) {
+	m.mu.Lock()
+	m.recordingsDir = dir
+	m.mu.Unlock()
+}
+
+// StartRecording records the session of connection id; it returns the file name.
+func (m *ConnectionManager) StartRecording(id, title string) (string, error) {
+	conn, err := m.get(id)
+	if err != nil {
+		return "", err
+	}
+	m.mu.RLock()
+	dir := m.recordingsDir
+	m.mu.RUnlock()
+	if dir == "" {
+		return "", errors.New("recordings folder is not configured")
+	}
+	return conn.StartRecording(dir, title)
+}
+
+func (m *ConnectionManager) StopRecording(id string) error {
+	conn, err := m.get(id)
+	if err != nil {
+		return err
+	}
+	conn.StopRecording()
+	return nil
+}
+
+func (m *ConnectionManager) IsRecording(id string) bool {
+	conn, err := m.get(id)
+	return err == nil && conn.Recording()
 }
