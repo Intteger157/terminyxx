@@ -23,6 +23,9 @@ type RDPSession struct {
 	Width       int    `json:"width"`
 	Height      int    `json:"height"`
 	Clipboard   bool   `json:"clipboard"`
+	// Audio is the profile's audio mode: "local" plays remote sound here,
+	// "remote" leaves it on the server, "off" mutes it.
+	Audio string `json:"audio"`
 }
 
 // RDPOpen prepares a built-in RDP session for tabID. It fetches the server
@@ -79,6 +82,7 @@ func (a *App) RDPOpen(tabID, profileID, password, acceptFingerprint string) (RDP
 		Width:       p.Width,
 		Height:      p.Height,
 		Clipboard:   p.Options.Clipboard,
+		Audio:       p.Options.Audio,
 	}, nil
 }
 
