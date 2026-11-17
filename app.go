@@ -194,6 +194,9 @@ func (a *App) autoStartTunnels(req connection.ConnectRequest) {
 
 // SFTPReadForEdit loads a remote text file for the built-in editor.
 func (a *App) SFTPReadForEdit(id, path string) (connection.EditFile, error) {
+	if a.sec.lock != nil && a.sec.lock.Locked() {
+		return connection.EditFile{}, connection.ErrLocked
+	}
 	return a.connMgr.ReadForEdit(id, path)
 }
 
@@ -259,7 +262,12 @@ func (a *App) ReadRecording(name string) (recording.Recording, error) {
 	return recording.Read(a.recordingsDir, name)
 }
 
-func (a *App) DeleteRecording(name string) error { return recording.Delete(a.recordingsDir, name) }
+func (a *App) DeleteRecording(name string) error {
+	if a.sec.lock != nil && a.sec.lock.Locked() {
+		return connection.ErrLocked
+	}
+	return recording.Delete(a.recordingsDir, name)
+}
 
 func (a *App) SearchRecordings(query string) ([]recording.Hit, error) {
 	if a.sec.lock != nil && a.sec.lock.Locked() {
