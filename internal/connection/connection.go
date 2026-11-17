@@ -19,8 +19,21 @@ import (
 const (
 	dialTimeout       = 15 * time.Second
 	keepaliveInterval = 30 * time.Second
-	keepaliveMaxMiss  = 3
+	// keepaliveTimeout: a reply that doesn't come in time counts as missed.
+	// Without it a half-open TCP connection blocks SendRequest for as long as
+	// the OS keeps retransmitting, and the tab never shows "disconnected".
+	keepaliveTimeout = 15 * time.Second
+	keepaliveMaxMiss = 3
 )
+
+// handshakeTimeout bounds the SSH handshake and authentication. It is
+// longer than dialTimeout because agent keys may wait for a confirmation or
+// a hardware key touch. A variable so tests can shorten it.
+var handshakeTimeout = 60 * time.Second
+
+// errHandshakeTimeout is returned when the server accepts the TCP connection
+// but never completes the SSH handshake.
+var errHandshakeTimeout = errors.New("ssh: the server did not complete the handshake in time")
 
 // ManagedConnection is one SSH client shared by the tab's shell and SFTP.
 type ManagedConnection struct {
@@ -118,7 +131,12 @@ func dialHop(req ConnectRequest, via *ssh.Client, hostKeys *HostKeyStore, policy
 
 	var client *ssh.Client
 	if via == nil {
-		client, err = ssh.Dial("tcp", addr, config)
+		// Not ssh.Dial: its Timeout only covers the TCP connect, so a server
+		// that never answers the handshake would hang the connect forever.
+		var conn net.Conn
+		if conn, err = net.DialTimeout("tcp", addr, dialTimeout); err == nil {
+			client, err = handshake(conn, addr, config)
+		}
 	} else {
 		client, err = dialThrough(via, addr, config)
 	}
@@ -141,13 +159,29 @@ func dialThrough(via *ssh.Client, addr string, config *ssh.ClientConfig) (*ssh.C
 	if err != nil {
 		return nil, fmt.Errorf("jump host cannot reach %s: %w", addr, err)
 	}
-	_ = conn.SetDeadline(time.Now().Add(dialTimeout))
+	return handshake(conn, addr, config)
+}
+
+// handshake runs the SSH handshake on conn, closing it after
+// handshakeTimeout. A timer is used instead of SetDeadline because the
+// channel connections of a jump host don't support deadlines.
+func handshake(conn net.Conn, addr string, config *ssh.ClientConfig) (*ssh.Client, error) {
+	var timedOut atomic.Bool
+	timer := time.AfterFunc(handshakeTimeout, func() {
+		timedOut.Store(true)
+		_ = conn.Close()
+	})
 	ncc, chans, reqs, err := ssh.NewClientConn(conn, addr, config)
+	if !timer.Stop() && timedOut.Load() {
+		if err == nil {
+			_ = ncc.Close()
+		}
+		return nil, errHandshakeTimeout
+	}
 	if err != nil {
 		_ = conn.Close()
 		return nil, err
 	}
-	_ = conn.SetDeadline(time.Time{})
 	return ssh.NewClient(ncc, chans, reqs), nil
 }
 
@@ -197,7 +231,22 @@ func (c *ManagedConnection) keepalive() {
 			if client == nil {
 				return
 			}
-			if _, _, err := client.SendRequest("keepalive@openssh.com", true, nil); err != nil {
+			// Buffered: a request still blocked when we give up on it exits
+			// once the reply arrives or client.Close below fails it.
+			reply := make(chan error, 1)
+			go func() {
+				_, _, err := client.SendRequest("keepalive@openssh.com", true, nil)
+				reply <- err
+			}()
+			var err error
+			select {
+			case err = <-reply:
+			case <-time.After(keepaliveTimeout):
+				err = errors.New("keepalive timeout")
+			case <-c.stop:
+				return
+			}
+			if err != nil {
 				missed++
 				if missed >= keepaliveMaxMiss {
 					_ = client.Close()
