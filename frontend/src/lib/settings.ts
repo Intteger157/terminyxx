@@ -44,6 +44,10 @@ export interface AppSettings {
     /** Look for a newer GitHub release at startup. */
     autoCheck: boolean;
   };
+  rdp: {
+    /** Open RDP hosts in a tab (IronRDP) instead of the system's RDP client. */
+    builtin: boolean;
+  };
   /**
    * Mirrors `security.SecurityConfig` in internal/security/config.go: the Go
    * side decodes this part of the JSON on every save and enforces it.
@@ -186,6 +190,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     rules: DEFAULT_RULES,
   },
   updates: { autoCheck: true },
+  rdp: { builtin: true },
   security: {
     hideFromCapture: true,
     lock: { biometrics: false, autoLockMinutes: 15, lockOnMinimize: false },
@@ -248,6 +253,7 @@ function normalize(raw: unknown): AppSettings {
         : DEFAULT_RULES,
     },
     updates: { autoCheck: (r.updates?.autoCheck ?? true) !== false },
+    rdp: { builtin: (r.rdp?.builtin ?? true) !== false },
     security: {
       hideFromCapture: sec.hideFromCapture !== false,
       lock: {

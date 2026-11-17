@@ -16,6 +16,7 @@ import (
 	"terminyxx/internal/connection"
 	"terminyxx/internal/importers"
 	"terminyxx/internal/rdp"
+	"terminyxx/internal/rdpgw"
 	"terminyxx/internal/recording"
 	"terminyxx/internal/security"
 	"terminyxx/internal/store"
@@ -35,6 +36,7 @@ type App struct {
 	connMgr *connection.ConnectionManager
 	data    *store.Store
 	rdp     rdp.Launcher
+	rdpgw   *rdpgw.Gateway
 	stop    chan struct{}
 	sec     securityState
 
@@ -67,6 +69,11 @@ func (a *App) startup(ctx context.Context) {
 	}
 	a.connMgr.SetRecordingsDir(a.recordingsDir)
 	a.rdp = rdp.NewLauncher()
+	rdpCerts := "rdp_known_certs"
+	if dir, err := store.DataDir(); err == nil {
+		rdpCerts = filepath.Join(dir, "rdp_known_certs")
+	}
+	a.rdpgw = rdpgw.New(rdpgw.NewTrustStore(rdpCerts))
 
 	a.stop = make(chan struct{})
 	a.initSecurity()
@@ -107,6 +114,9 @@ func (a *App) shutdown(ctx context.Context) {
 	}
 	if a.connMgr != nil {
 		a.connMgr.CloseAll()
+	}
+	if a.rdpgw != nil {
+		a.rdpgw.Shutdown()
 	}
 	if a.data != nil {
 		_ = a.data.Close()

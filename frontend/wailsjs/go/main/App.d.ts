@@ -8,6 +8,7 @@ import {store} from '../models';
 import {importers} from '../models';
 import {rdp} from '../models';
 import {recording} from '../models';
+import {main} from '../models';
 
 export function AppVersion():Promise<string>;
 
@@ -82,6 +83,12 @@ export function MoveItem(arg1:string,arg2:string,arg3:string,arg4:number):Promis
 export function OpenRecordingsFolder():Promise<void>;
 
 export function PickImportPaths(arg1:string):Promise<Array<string>>;
+
+export function RDPClose(arg1:string):Promise<void>;
+
+export function RDPLastError(arg1:string):Promise<string>;
+
+export function RDPOpen(arg1:string,arg2:string,arg3:string,arg4:string):Promise<main.RDPSession>;
 
 export function ReadImport(arg1:string,arg2:Array<string>):Promise<importers.Result>;
 

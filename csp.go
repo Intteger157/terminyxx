@@ -7,12 +7,15 @@ import "net/http"
 // frames. Terminal output is data for xterm.js and can never become markup,
 // but even if something did get injected it couldn't run or phone home.
 // 'unsafe-inline' for styles is needed by xterm.js and React style props.
+// The built-in RDP client is WebAssembly ('wasm-unsafe-eval' compiles it, the
+// module is a data: URL) and talks to the local gateway (internal/rdpgw) over
+// ws://127.0.0.1.
 const contentSecurityPolicy = "default-src 'self'; " +
-	"script-src 'self'; " +
+	"script-src 'self' 'wasm-unsafe-eval'; " +
 	"style-src 'self' 'unsafe-inline'; " +
 	"img-src 'self' data: blob:; " +
 	"font-src 'self' data:; " +
-	"connect-src 'self'; " +
+	"connect-src 'self' data: ws://127.0.0.1:*; " +
 	"media-src 'none'; object-src 'none'; frame-src 'none'; worker-src 'self' blob:; " +
 	"base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
 

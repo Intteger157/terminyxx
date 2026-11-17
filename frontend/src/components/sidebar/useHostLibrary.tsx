@@ -25,7 +25,6 @@ import {
   DeleteFolder,
   DeleteRDPProfile,
   DeleteSSHProfile,
-  LaunchRDP,
   ListFolders,
   ListRDPProfiles,
   ListSSHProfiles,
@@ -40,6 +39,8 @@ interface Options {
   editSSH: (p: SSHProfile) => void;
   newSSH: (folderId: string) => void;
   editRDP: (p: RDPProfile) => void;
+  /** external: open in the system's RDP client instead of a tab. */
+  connectRDP: (p: RDPProfile, external?: boolean) => void;
   newRDP: (folderId: string) => void;
 }
 
@@ -117,7 +118,7 @@ export function useHostLibrary(opts: Options) {
 
   const openHost = (h: HostItem) => {
     if (h.kind === 'ssh') opts.connectSSH(h.profile);
-    else LaunchRDP(h.id).catch((err) => dialogs.toast(`Failed to launch RDP: ${errorText(err)}`, 'error'));
+    else opts.connectRDP(h.profile);
   };
 
   const hostMenu = (e: React.MouseEvent, h: HostItem) => {
@@ -144,7 +145,8 @@ export function useHostLibrary(opts: Options) {
             { label: 'Delete', icon: <Trash2 size={13} />, danger: true, onSelect: () => deleteHost(h) },
           ]
         : [
-            { label: 'Launch', icon: <Monitor size={13} />, onSelect: () => openHost(h) },
+            { label: 'Connect', icon: <Play size={13} />, onSelect: () => openHost(h) },
+            { label: 'Open in system client', icon: <Monitor size={13} />, onSelect: () => opts.connectRDP(h.profile, true) },
             { label: 'Edit…', icon: <Pencil size={13} />, onSelect: () => opts.editRDP(h.profile) },
             { type: 'separator' },
             { label: 'Delete', icon: <Trash2 size={13} />, danger: true, onSelect: () => deleteHost(h) },
