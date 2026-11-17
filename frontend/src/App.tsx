@@ -650,6 +650,7 @@ function App() {
                   onConnect={handleProfileConnect}
                   onQuickConnect={quickConnect}
                   onNew={() => openConnectDialog(null)}
+                  onImport={() => library.setImportOpen(true)}
                 />
               </div>
             }

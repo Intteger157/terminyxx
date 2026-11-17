@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ArrowRight, Plus, TerminalSquare } from 'lucide-react';
+import { ArrowRight, Plus, TerminalSquare, Upload } from 'lucide-react';
 import type { SSHProfile } from '../../types';
 import { Avatar } from '../ui/Avatar';
 import { modKey, parseQuickTarget } from '../../lib/hosts';
@@ -11,9 +11,10 @@ interface WelcomeProps {
   onConnect: (profile: SSHProfile) => void;
   onQuickConnect: (target: QuickTarget) => void;
   onNew: () => void;
+  onImport: () => void;
 }
 
-export function Welcome({ platform, profiles, onConnect, onQuickConnect, onNew }: WelcomeProps) {
+export function Welcome({ platform, profiles, onConnect, onQuickConnect, onNew, onImport }: WelcomeProps) {
   const [value, setValue] = useState('');
   const target = parseQuickTarget(value);
   const mod = modKey(platform);
@@ -64,17 +65,28 @@ export function Welcome({ platform, profiles, onConnect, onQuickConnect, onNew }
         <div className="mt-10">
           <div className="flex items-center justify-between mb-3">
             <h2 className="label mb-0">Saved hosts</h2>
-            <button className="btn-ghost text-2xs" onClick={onNew}>
-              <Plus size={12} /> New host
-            </button>
+            <div className="flex items-center gap-1">
+              <button className="btn-ghost text-2xs" onClick={onImport} title="Import hosts from OpenSSH, MobaXterm, PuTTY, WinSCP and more">
+                <Upload size={12} /> Import
+              </button>
+              <button className="btn-ghost text-2xs" onClick={onNew}>
+                <Plus size={12} /> New host
+              </button>
+            </div>
           </div>
           {profiles.length === 0 ? (
-            <button
-              onClick={onNew}
-              className="w-full card border-dashed px-5 py-8 text-center text-gray-500 hover:text-gray-300 hover:border-border-strong transition-colors"
-            >
-              Saved hosts appear here. Add your first one.
-            </button>
+            <div className="card border-dashed px-5 py-7 text-center">
+              <p className="text-gray-500">Saved hosts appear here.</p>
+              <div className="mt-4 flex items-center justify-center gap-2">
+                <button className="btn-primary" onClick={onNew}>
+                  <Plus size={14} /> Add a host
+                </button>
+                <button className="btn-secondary" onClick={onImport}>
+                  <Upload size={14} /> Import from another app
+                </button>
+              </div>
+              <p className="mt-3 text-2xs text-gray-600">OpenSSH config, MobaXterm, PuTTY, WinSCP, FileZilla, Termius and others.</p>
+            </div>
           ) : (
             <div className="grid grid-cols-2 gap-2">
               {profiles.slice(0, 8).map((p) => (
