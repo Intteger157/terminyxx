@@ -1,4 +1,5 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { Minimize2, Unplug } from 'lucide-react';
 import type { IronError, UserInteraction } from '@devolutions/iron-remote-desktop';
 import { RDPClose, RDPLastError } from '../../../wailsjs/go/main/App';
 import type { main } from '../../../wailsjs/go/models';
@@ -77,6 +78,10 @@ export function RdpPane({
   visible,
   focused,
   dynamicResolution,
+  fullscreen = false,
+  title = '',
+  onExitFullscreen,
+  onDisconnect,
   onConnected,
   onEnded,
 }: {
@@ -85,6 +90,11 @@ export function RdpPane({
   visible: boolean;
   focused: boolean;
   dynamicResolution: boolean;
+  /** Covers the whole window (the app also puts the window in full screen). */
+  fullscreen?: boolean;
+  title?: string;
+  onExitFullscreen?: () => void;
+  onDisconnect?: () => void;
   onConnected: () => void;
   /** error is null when the session ended normally. */
   onEnded: (error: string | null, authFailed: boolean) => void;
@@ -219,8 +229,82 @@ export function RdpPane({
   }, [dynamicResolution]);
 
   useEffect(() => {
-    if (visible && focused) element.current?.focus();
-  }, [visible, focused]);
+    if ((visible && focused) || fullscreen) element.current?.focus();
+  }, [visible, focused, fullscreen]);
 
-  return <div ref={host} className="absolute inset-0 bg-black overflow-hidden" />;
+  return (
+    <div ref={host} className={`${fullscreen ? 'fixed z-[55]' : 'absolute'} inset-0 bg-black overflow-hidden`}>
+      {fullscreen && (
+        <FullscreenBar
+          title={title}
+          onExit={() => {
+            onExitFullscreen?.();
+          }}
+          onDisconnect={() => onDisconnect?.()}
+          refocus={() => element.current?.focus()}
+        />
+      )}
+    </div>
+  );
+}
+
+/**
+ * The connection bar of a full-screen session (like mstsc's): hidden at the
+ * top edge, slides down when the pointer reaches it. Keyboard focus goes back
+ * to the remote desktop after each click, so shortcuts keep reaching it.
+ */
+function FullscreenBar({
+  title,
+  onExit,
+  onDisconnect,
+  refocus,
+}: {
+  title: string;
+  onExit: () => void;
+  onDisconnect: () => void;
+  refocus: () => void;
+}) {
+  const [shown, setShown] = useState(true);
+  const hideTimer = useRef(0);
+  // Show briefly on entry so the user learns where it is.
+  useEffect(() => {
+    hideTimer.current = window.setTimeout(() => setShown(false), 2500);
+    return () => window.clearTimeout(hideTimer.current);
+  }, []);
+  const show = () => {
+    window.clearTimeout(hideTimer.current);
+    setShown(true);
+  };
+  const hide = () => {
+    window.clearTimeout(hideTimer.current);
+    hideTimer.current = window.setTimeout(() => setShown(false), 600);
+  };
+  const mod = navigator.platform.toLowerCase().includes('mac') ? '⌘⌥' : 'Ctrl+Alt+';
+  return (
+    <>
+      <div className="absolute top-0 inset-x-0 h-1.5 z-10" onPointerEnter={show} />
+      <div
+        className={`absolute top-0 left-1/2 -translate-x-1/2 z-20 flex items-center gap-1 pl-4 pr-1.5 py-1.5 rounded-b-xl bg-surface-raised/95 backdrop-blur-xl shadow-pop ring-1 ring-white/[0.06] transition-transform duration-200 ${
+          shown ? 'translate-y-0' : '-translate-y-full'
+        }`}
+        onPointerEnter={show}
+        onPointerLeave={hide}
+      >
+        <span className="text-[12px] text-gray-300 max-w-[40vw] truncate pr-2">{title}</span>
+        <button
+          className="btn-secondary h-7 px-2.5 text-xs"
+          title={`Exit full screen (${mod}Enter)`}
+          onClick={() => {
+            onExit();
+            refocus();
+          }}
+        >
+          <Minimize2 size={13} /> Exit full screen
+        </button>
+        <button className="icon-btn w-7 h-7 text-red-300 hover:text-red-200" title="Disconnect" onClick={onDisconnect}>
+          <Unplug size={14} />
+        </button>
+      </div>
+    </>
+  );
 }

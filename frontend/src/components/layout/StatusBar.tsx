@@ -1,4 +1,4 @@
-import { ArrowUpCircle, Box, Copy, EyeOff, ScrollText, FolderTree, Lock, Plug, RotateCw, ShieldAlert, ShieldCheck, Unplug } from 'lucide-react';
+import { ArrowUpCircle, Box, Copy, EyeOff, ScrollText, FolderTree, Lock, Maximize2, Plug, RotateCw, ShieldAlert, ShieldCheck, Unplug } from 'lucide-react';
 import { showCaptureNotice, useCaptureProtection } from '../../lib/captureProtection';
 import { useUpdates } from '../../lib/updates';
 import type { TerminalTab } from '../../types';
@@ -24,6 +24,8 @@ interface StatusBarProps {
   onOpenSnippets: () => void;
   onOpenRecordings: () => void;
   onOpenContainers: () => void;
+  /** Shows the active RDP pane in full screen. */
+  onRdpFullscreen: () => void;
   /** "Type in all panes" state for the visible tab. */
   broadcast: { enabled: boolean; count: number };
   onToggleBroadcast: () => void;
@@ -36,7 +38,7 @@ const LABEL: Record<TerminalTab['status'], string> = {
   disconnected: 'Disconnected',
 };
 
-export function StatusBar({ tab, size, sftpOpen, openTabs, onToggleSftp, onDisconnect, onReconnect, onOpenSecurity, onOpenUpdates, masking, onToggleMasking, lockConfigured, onLock, onOpenSnippets, onOpenRecordings, onOpenContainers, broadcast, onToggleBroadcast }: StatusBarProps) {
+export function StatusBar({ tab, size, sftpOpen, openTabs, onToggleSftp, onDisconnect, onReconnect, onOpenSecurity, onOpenUpdates, masking, onToggleMasking, lockConfigured, onLock, onOpenSnippets, onOpenRecordings, onOpenContainers, onRdpFullscreen, broadcast, onToggleBroadcast }: StatusBarProps) {
   const protection = useCaptureProtection();
   const update = useUpdates().result;
   const status = tab?.status;
@@ -75,6 +77,11 @@ export function StatusBar({ tab, size, sftpOpen, openTabs, onToggleSftp, onDisco
           {status === 'connected' && (
             <button className="btn-ghost h-5 px-1.5 text-2xs" onClick={onDisconnect} title="Disconnect">
               <Unplug size={11} /> Disconnect
+            </button>
+          )}
+          {status === 'connected' && tab.rdp && (
+            <button className="btn-ghost h-5 px-1.5 text-2xs" onClick={onRdpFullscreen} title="Full screen (Ctrl+Alt+Enter)">
+              <Maximize2 size={11} /> Full screen
             </button>
           )}
           {(status === 'disconnected' || status === 'idle') && (
