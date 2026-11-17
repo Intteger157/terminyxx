@@ -15,7 +15,7 @@ import {
   Loader2,
   RefreshCw,
 } from 'lucide-react';
-import type { FileEntry } from '../../types';
+import type { ActivePane, FileEntry } from '../../types';
 
 export const PARENT = '..';
 
@@ -37,6 +37,7 @@ export function paneRows(p: PaneState, hasParent: boolean): FileEntry[] {
 
 interface FilePaneProps {
   title: string;
+  side: ActivePane;
   icon: ReactNode;
   state: PaneState;
   rows: FileEntry[];
@@ -50,6 +51,11 @@ interface FilePaneProps {
   /** Start dragging a row (and the selection it belongs to). */
   onRowDragStart: (index: number, e: ReactDragEvent) => void;
   onRowDragEnd: () => void;
+  /**
+   * Rows are dragged with the pointer instead of HTML5 drag and drop, so a drag
+   * can carry on outside the window (see SftpPanel). Replaces onRowDragStart.
+   */
+  onRowPointerDown?: (index: number, e: ReactMouseEvent) => void;
   /** Whether the current drag can be dropped here; `dir` is a folder row under the cursor. */
   canDrop: (e: ReactDragEvent) => boolean;
   /** An in-app drop; `dir` is the folder row dropped on, or null for the current folder. */
@@ -64,6 +70,7 @@ interface FilePaneProps {
 
 export function FilePane({
   title,
+  side,
   icon,
   state,
   rows,
@@ -74,6 +81,7 @@ export function FilePane({
   onRowClick,
   onRowDragStart,
   onRowDragEnd,
+  onRowPointerDown,
   canDrop,
   onDropItems,
   fileDropId,
@@ -149,6 +157,8 @@ export function FilePane({
       onDragLeave={onDragLeave}
       onDrop={onDrop}
       data-file-drop={fileDropId}
+      data-pane={side}
+      data-drive-list={isDriveList ? '1' : undefined}
     >
       <div className="flex items-center gap-1 px-1.5 h-9 border-b border-white/[0.05]">
         <span
@@ -189,7 +199,7 @@ export function FilePane({
               key={entry.path}
               data-row={i}
               data-drop-dir={isFolderTarget ? entry.path : undefined}
-              draggable={!isParent && !isDriveList}
+              draggable={!onRowPointerDown && !isParent && !isDriveList}
               className={`grid grid-cols-[1fr_72px_112px] gap-2 items-center mx-1 px-2 h-[26px] rounded-md cursor-default ${
                 isDropRow
                   ? 'bg-accent/25 ring-1 ring-inset ring-accent text-gray-100'
@@ -202,7 +212,9 @@ export function FilePane({
                         : 'hover:bg-white/[0.03]'
               } ${isSelected ? 'text-amber-300' : isCursor && active ? '' : 'text-gray-300'}`}
               onMouseDown={(e) => {
-                if (e.button === 0) onRowMouseDown(i, e);
+                if (e.button !== 0) return;
+                onRowMouseDown(i, e);
+                if (onRowPointerDown && !isParent) onRowPointerDown(i, e);
               }}
               onClick={(e) => onRowClick(i, e)}
               onDragStart={(e) => onRowDragStart(i, e)}

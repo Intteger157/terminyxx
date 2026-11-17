@@ -166,6 +166,10 @@ export function RemoveTrustedHost(arg1) {
   return window['go']['main']['App']['RemoveTrustedHost'](arg1);
 }
 
+export function SFTPCancelDragOut(arg1) {
+  return window['go']['main']['App']['SFTPCancelDragOut'](arg1);
+}
+
 export function SFTPCancelTransfer(arg1) {
   return window['go']['main']['App']['SFTPCancelTransfer'](arg1);
 }
@@ -176,6 +180,10 @@ export function SFTPListDir(arg1, arg2) {
 
 export function SFTPMkdir(arg1, arg2) {
   return window['go']['main']['App']['SFTPMkdir'](arg1, arg2);
+}
+
+export function SFTPPrepareDragOut(arg1, arg2) {
+  return window['go']['main']['App']['SFTPPrepareDragOut'](arg1, arg2);
 }
 
 export function SFTPReadFile(arg1, arg2) {
@@ -192,6 +200,10 @@ export function SFTPRemove(arg1, arg2) {
 
 export function SFTPRename(arg1, arg2, arg3) {
   return window['go']['main']['App']['SFTPRename'](arg1, arg2, arg3);
+}
+
+export function SFTPStartDragOut(arg1) {
+  return window['go']['main']['App']['SFTPStartDragOut'](arg1);
 }
 
 export function SFTPTransfer(arg1, arg2) {

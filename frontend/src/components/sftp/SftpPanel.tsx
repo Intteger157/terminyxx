@@ -17,12 +17,15 @@ import {
   LocalRemove,
   LocalRename,
   ReadLocalFile,
+  SFTPCancelDragOut,
   SFTPCancelTransfer,
   SFTPListDir,
   SFTPMkdir,
+  SFTPPrepareDragOut,
   SFTPReadFile,
   SFTPRemove,
   SFTPRename,
+  SFTPStartDragOut,
   SFTPTransfer,
 } from '../../../wailsjs/go/main/App';
 
@@ -47,6 +50,8 @@ const localJoin = (dir: string, name: string) => {
   return dir.endsWith(sep) ? dir + name : dir + sep + name;
 };
 const baseName = (p: string) => p.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? p;
+
+const isMac = typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform);
 
 const HEIGHT_KEY = 'terminyxx.sftpHeight';
 
@@ -323,6 +328,140 @@ export function SftpPanel({ connectionId, visible, onClose, fill = false }: Sftp
     if (paths.length > 1) dragBadge(e, `${paths.length} items`);
   };
 
+  // Server rows are dragged with the pointer rather than HTML5 drag and drop:
+  // an HTML5 drag belongs to the webview and can't hand files to Explorer. Over
+  // the local pane the drop is a download; once the pointer leaves the window
+  // with the button still held, the OS drag takes over (internal/dragout) and
+  // the files are streamed from the server when they are dropped.
+  const dragCtx = useRef({ remote, remoteRows, local, startTransfer });
+  dragCtx.current = { remote, remoteRows, local, startTransfer };
+
+  const remotePointerDrag = (index: number, down: ReactMouseEvent) => {
+    if (down.button !== 0) return;
+    const sx = down.clientX;
+    const sy = down.clientY;
+    let drag: { paths: string[]; token: Promise<string | null>; ghost: HTMLElement; hover: HTMLElement | null } | null = null;
+    let finished = false;
+
+    const setHover = (el: HTMLElement | null) => {
+      if (!drag || drag.hover === el) return;
+      drag.hover?.removeAttribute('data-drag-hover');
+      el?.setAttribute('data-drag-hover', '');
+      drag.hover = el;
+    };
+    const cancelToken = () => {
+      void drag?.token.then((tk) => {
+        if (tk) void SFTPCancelDragOut(tk);
+      });
+    };
+    const finish = () => {
+      finished = true;
+      window.removeEventListener('mousemove', onMove, true);
+      window.removeEventListener('mouseup', onUp, true);
+      window.removeEventListener('keydown', onKey, true);
+      if (drag) {
+        setHover(null);
+        drag.ghost.remove();
+      }
+      document.body.style.cursor = '';
+    };
+    const dropTarget = (x: number, y: number) => {
+      const under = document.elementFromPoint(x, y) as HTMLElement | null;
+      const pane = under?.closest<HTMLElement>('[data-pane="local"]');
+      if (!pane || pane.dataset.driveList) return null;
+      const row = under?.closest<HTMLElement>('[data-drop-dir]');
+      return { pane, row: row && pane.contains(row) ? row : null };
+    };
+    const begin = () => {
+      const { remote: st, remoteRows: rows } = dragCtx.current;
+      const entry = rows[index];
+      if (!entry || entry.name === PARENT) {
+        finish();
+        return;
+      }
+      const paths = st.selected.has(entry.path) ? st.entries.filter((x) => st.selected.has(x.path)).map((x) => x.path) : [entry.path];
+      const ghost = document.createElement('div');
+      ghost.textContent = paths.length > 1 ? `${paths.length} items` : entry.name;
+      ghost.style.cssText =
+        'position:fixed;z-index:9999;pointer-events:none;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;' +
+        'padding:3px 9px;border-radius:6px;font:600 12px Inter,sans-serif;color:#fff;background:rgb(var(--accent));' +
+        'box-shadow:0 4px 12px rgba(0,0,0,.4)';
+      document.body.appendChild(ghost);
+      document.body.style.cursor = 'copy';
+      // Start listing the selection now so the OS drag can begin the moment the pointer leaves.
+      const token = isMac ? Promise.resolve(null) : SFTPPrepareDragOut(connectionId, paths).catch(() => null);
+      drag = { paths, token, ghost, hover: null };
+    };
+    const onMove = (ev: MouseEvent) => {
+      if (finished) return;
+      if ((ev.buttons & 1) === 0) {
+        // The button was released where we couldn't see it.
+        cancelToken();
+        finish();
+        return;
+      }
+      if (!drag) {
+        if (Math.hypot(ev.clientX - sx, ev.clientY - sy) < 6) return;
+        begin();
+        if (!drag) return;
+      }
+      drag.ghost.style.left = `${ev.clientX + 12}px`;
+      drag.ghost.style.top = `${ev.clientY + 12}px`;
+      const outside = ev.clientX < 0 || ev.clientY < 0 || ev.clientX >= window.innerWidth || ev.clientY >= window.innerHeight;
+      if (outside) {
+        const { token } = drag;
+        finish();
+        if (isMac) {
+          dialogs.toast('Dragging out to Finder is not supported yet. Drop on the Local pane, or press F5.', 'info');
+          return;
+        }
+        void token.then(async (tk) => {
+          if (!tk) {
+            dialogs.toast('Could not start the drag', 'error');
+            return;
+          }
+          try {
+            await SFTPStartDragOut(tk);
+          } catch (err) {
+            dialogs.toast(`Drag failed: ${errorText(err)}`, 'error');
+          }
+        });
+        return;
+      }
+      const target = dropTarget(ev.clientX, ev.clientY);
+      setHover(target ? (target.row ?? target.pane) : null);
+    };
+    const onUp = (ev: MouseEvent) => {
+      if (finished) return;
+      const d = drag;
+      const target = d ? dropTarget(ev.clientX, ev.clientY) : null;
+      cancelToken();
+      finish();
+      if (!d || !target) return; // a plain click, or released over nothing
+      const { local: lo, startTransfer: run } = dragCtx.current;
+      const dir = target.row?.dataset.dropDir ?? null;
+      setActive('local');
+      rootRef.current?.focus();
+      void run({
+        upload: false,
+        sources: d.paths,
+        destDir: dir ?? lo.path,
+        destEntries: dir ? undefined : lo.entries,
+        move: ev.shiftKey,
+        ask: false,
+      });
+    };
+    const onKey = (ev: KeyboardEvent) => {
+      if (ev.key !== 'Escape' || finished) return;
+      ev.stopPropagation();
+      cancelToken();
+      finish();
+    };
+    window.addEventListener('mousemove', onMove, true);
+    window.addEventListener('mouseup', onUp, true);
+    window.addEventListener('keydown', onKey, true);
+  };
+
   const mkdir = async () => {
     if (active === 'local' && local.path === '') return;
     const name = await dialogs.prompt({ title: 'New folder', label: `In ${pane.path}`, confirmLabel: 'Create' });
@@ -579,6 +718,7 @@ export function SftpPanel({ connectionId, visible, onClose, fill = false }: Sftp
             <FilePane
               key={which}
               title={which === 'local' ? 'Local' : 'Server'}
+              side={which}
               icon={which === 'local' ? <Laptop size={12} /> : <Server size={12} />}
               state={st}
               rows={r}
@@ -594,6 +734,7 @@ export function SftpPanel({ connectionId, visible, onClose, fill = false }: Sftp
               onRowDragEnd={() => {
                 rowDrag = null;
               }}
+              onRowPointerDown={which === 'remote' ? remotePointerDrag : undefined}
               canDrop={canDrop(which)}
               onDropItems={dropItems(which)}
               fileDropId={which === 'remote' ? `sftp-${connectionId}` : undefined}
