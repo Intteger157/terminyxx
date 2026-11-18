@@ -545,14 +545,18 @@ function FullscreenBar({
     window.clearTimeout(hideTimer.current);
     hideTimer.current = window.setTimeout(() => setShown(false), 600);
   };
-  const mod = navigator.platform.toLowerCase().includes('mac') ? '⌘⌥' : 'Ctrl+Alt+';
+  const mac = navigator.platform.toLowerCase().includes('mac');
+  const mod = mac ? '⌘⌥' : 'Ctrl+Alt+';
+  // In macOS full screen, the cursor at the top edge slides the menu bar and the
+  // window's title bar over the page, so there the bar drops below them.
+  const place = mac
+    ? `top-0 rounded-xl ${shown ? 'translate-y-[96px]' : '-translate-y-full'}`
+    : `top-0 rounded-b-xl ${shown ? 'translate-y-0' : '-translate-y-full'}`;
   return (
     <>
       <div className="absolute top-0 inset-x-0 h-1.5 z-10" onPointerEnter={show} />
       <div
-        className={`absolute top-0 left-1/2 -translate-x-1/2 z-20 flex items-center gap-1 pl-4 pr-1.5 py-1.5 rounded-b-xl bg-surface-raised/95 backdrop-blur-xl shadow-pop ring-1 ring-white/[0.06] transition-transform duration-200 ${
-          shown ? 'translate-y-0' : '-translate-y-full'
-        }`}
+        className={`absolute left-1/2 -translate-x-1/2 z-20 flex items-center gap-1 pl-4 pr-1.5 py-1.5 bg-surface-raised/95 backdrop-blur-xl shadow-pop ring-1 ring-white/[0.06] transition-transform duration-200 ${place}`}
         onPointerEnter={show}
         onPointerLeave={hide}
       >
