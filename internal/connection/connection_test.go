@@ -184,7 +184,7 @@ func TestShellExitDropsConnection(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec.waitFor(t, "closed", func() bool { return rec.has("terminal:closed:e", nil) })
-	rec.waitFor(t, "disconnected", func() bool { return rec.has("connection:state:e", "disconnected") })
+	rec.waitFor(t, "disconnected", func() bool { return rec.hasReason("connection:state:e", "disconnected", CloseExit) })
 	if _, err := m.get("e"); !errors.Is(err, ErrNotFound) {
 		t.Fatal("connection should be removed after shell exit")
 	}
@@ -196,7 +196,31 @@ func TestServerDisappears(t *testing.T) {
 	connectTrusted(t, m, passwordReq(s, "d"))
 	conn, _ := m.get("d")
 	conn.Client().Conn.Close() // simulate network drop
-	rec.waitFor(t, "disconnected", func() bool { return rec.has("connection:state:d", "disconnected") })
+	rec.waitFor(t, "disconnected", func() bool { return rec.hasReason("connection:state:d", "disconnected", CloseLost) })
+}
+
+func TestServerDisappearsWithShell(t *testing.T) {
+	s := newTestServer(t, serverOpts{password: "secret"})
+	m, rec, _ := newManager(t)
+	connectTrusted(t, m, passwordReq(s, "ds"))
+	if err := m.StartShell("ds", 80, 24); err != nil {
+		t.Fatal(err)
+	}
+	conn, _ := m.get("ds")
+	conn.Client().Conn.Close() // network drop while the shell runs
+	rec.waitFor(t, "disconnected", func() bool { return rec.hasReason("connection:state:ds", "disconnected", CloseLost) })
+}
+
+func TestDisconnectReason(t *testing.T) {
+	s := newTestServer(t, serverOpts{password: "secret"})
+	m, rec, _ := newManager(t)
+	connectTrusted(t, m, passwordReq(s, "u"))
+	if err := m.Disconnect("u"); err != nil {
+		t.Fatal(err)
+	}
+	if !rec.hasReason("connection:state:u", "disconnected", CloseByUser) {
+		t.Fatal("explicit disconnect should report reason closed")
+	}
 }
 
 func TestIncompleteTail(t *testing.T) {

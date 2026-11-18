@@ -54,6 +54,8 @@ export function useHostLibrary(opts: Options) {
   const [rdp, setRDP] = useState<RDPProfile[]>([]);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [importOpen, setImportOpen] = useState(false);
+  /** True once the hosts were read at least once (after unlocking). */
+  const [loaded, setLoaded] = useState(false);
 
   const reload = useCallback(async () => {
     try {
@@ -61,6 +63,7 @@ export function useHostLibrary(opts: Options) {
       setFolders(f ?? []);
       setSSH(s ?? []);
       setRDP(r ?? []);
+      setLoaded(true);
     } catch (err) {
       dialogs.toast(`Failed to load hosts: ${errorText(err)}`, 'error');
     }
@@ -302,5 +305,6 @@ export function useHostLibrary(opts: Options) {
     setImportOpen,
     importHosts,
     deleteHost,
+    loaded,
   };
 }

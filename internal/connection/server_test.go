@@ -228,6 +228,18 @@ func (r *recorder) has(name string, value interface{}) bool {
 	return false
 }
 
+// hasReason reports whether name was emitted with the values first, second.
+func (r *recorder) hasReason(name string, first, second interface{}) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, e := range r.events {
+		if e.name == name && len(e.data) > 1 && e.data[0] == first && e.data[1] == second {
+			return true
+		}
+	}
+	return false
+}
+
 func (r *recorder) waitFor(t *testing.T, what string, cond func() bool) {
 	t.Helper()
 	deadline := time.After(5 * time.Second)

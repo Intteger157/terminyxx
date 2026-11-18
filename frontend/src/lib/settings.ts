@@ -48,6 +48,12 @@ export interface AppSettings {
     /** Open RDP hosts in a tab (IronRDP) instead of the system's RDP client. */
     builtin: boolean;
   };
+  sessions: {
+    /** Reconnect SSH sessions that dropped (network, sleep), with growing delays. */
+    autoReconnect: boolean;
+    /** Reopen the tabs and split layout of the last run at startup. */
+    restore: boolean;
+  };
   /**
    * Mirrors `security.SecurityConfig` in internal/security/config.go: the Go
    * side decodes this part of the JSON on every save and enforces it.
@@ -191,6 +197,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   },
   updates: { autoCheck: true },
   rdp: { builtin: true },
+  sessions: { autoReconnect: true, restore: false },
   security: {
     hideFromCapture: true,
     lock: { biometrics: false, autoLockMinutes: 15, lockOnMinimize: false },
@@ -254,6 +261,10 @@ function normalize(raw: unknown): AppSettings {
     },
     updates: { autoCheck: (r.updates?.autoCheck ?? true) !== false },
     rdp: { builtin: (r.rdp?.builtin ?? true) !== false },
+    sessions: {
+      autoReconnect: (r.sessions?.autoReconnect ?? true) !== false,
+      restore: !!r.sessions?.restore,
+    },
     security: {
       hideFromCapture: sec.hideFromCapture !== false,
       lock: {

@@ -42,6 +42,9 @@ type SSHProfile struct {
 	// SFTPOnly marks a host that only offers SFTP (no shell): the UI opens the
 	// file manager and never starts a terminal.
 	SFTPOnly bool `json:"sftpOnly"`
+	// IdentityID points to a saved Identity whose user, auth type, key and
+	// password replace this host's own while it is set.
+	IdentityID string `json:"identityId"`
 }
 
 // Tunnel is a saved port forward (same shape as connection.TunnelSpec).
@@ -206,6 +209,17 @@ CREATE TABLE snippets (
 	// v8: SFTP-only hosts (no shell).
 	`
 ALTER TABLE ssh_profiles ADD COLUMN sftp_only INTEGER NOT NULL DEFAULT 0;`,
+	// v9: reusable identities (user + password or key) shared by hosts.
+	`
+CREATE TABLE identities (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    username TEXT NOT NULL DEFAULT '',
+    auth_type TEXT NOT NULL DEFAULT 'password',
+    key_path TEXT NOT NULL DEFAULT '',
+    sort_order INTEGER NOT NULL DEFAULT 0
+);
+ALTER TABLE ssh_profiles ADD COLUMN identity_id TEXT NOT NULL DEFAULT '';`,
 }
 
 func (s *Store) migrate() error {
@@ -263,14 +277,14 @@ func (s *Store) moveLegacyPasswords() {
 
 // --- SSH profiles ---
 
-const sshColumns = `id, name, host, port, username, auth_type, password, key_path, folder_id, sort_order, allow_legacy_algorithms, agent_forwarding, jump_profile_id, tunnels, sftp_only`
+const sshColumns = `id, name, host, port, username, auth_type, password, key_path, folder_id, sort_order, allow_legacy_algorithms, agent_forwarding, jump_profile_id, tunnels, sftp_only, identity_id`
 
 func scanSSH(row interface{ Scan(...any) error }) (SSHProfile, string, error) {
 	var p SSHProfile
 	var dbPassword string
 	var legacy, agentFwd, sftpOnly int
 	var tunnels string
-	err := row.Scan(&p.ID, &p.Name, &p.Host, &p.Port, &p.Username, &p.AuthType, &dbPassword, &p.KeyPath, &p.FolderID, &p.SortOrder, &legacy, &agentFwd, &p.JumpProfileID, &tunnels, &sftpOnly)
+	err := row.Scan(&p.ID, &p.Name, &p.Host, &p.Port, &p.Username, &p.AuthType, &dbPassword, &p.KeyPath, &p.FolderID, &p.SortOrder, &legacy, &agentFwd, &p.JumpProfileID, &tunnels, &sftpOnly, &p.IdentityID)
 	p.SFTPOnly = sftpOnly == 1
 	p.Tunnels = []Tunnel{}
 	if tunnels != "" {
@@ -304,7 +318,14 @@ func (s *Store) ListSSHProfiles() ([]SSHProfile, error) {
 		p.HasPassword = dbPassword != "" || s.hasSecret(p.ID)
 		profiles = append(profiles, p)
 	}
-	return profiles, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close() // one connection only: release it before reading identities
+	for i := range profiles {
+		s.applyIdentity(&profiles[i])
+	}
+	return profiles, nil
 }
 
 func (s *Store) hasSecret(id string) bool {
@@ -330,6 +351,7 @@ func (s *Store) SecretKeys() ([]string, error) {
 	for _, q := range []struct{ sql, prefix string }{
 		{`SELECT id FROM ssh_profiles`, "ssh:"},
 		{`SELECT id FROM rdp_profiles`, "rdp:"},
+		{`SELECT id FROM identities`, "ident:"},
 	} {
 		rows, err := s.db.Query(q.sql)
 		if err != nil {
@@ -350,8 +372,13 @@ func (s *Store) SecretKeys() ([]string, error) {
 // keychain (needed after an unlock when the vault was locked at startup).
 func (s *Store) MoveLegacyPasswords() { s.moveLegacyPasswords() }
 
-// SSHPassword returns the stored password for a profile ("" if none).
+// SSHPassword returns the stored password for a profile ("" if none); for a
+// host that uses an identity, the identity's password.
 func (s *Store) SSHPassword(id string) (string, error) {
+	var identityID string
+	if err := s.db.QueryRow(`SELECT identity_id FROM ssh_profiles WHERE id = ?`, id).Scan(&identityID); err == nil && identityID != "" && s.identityExists(identityID) {
+		return s.IdentityPassword(identityID)
+	}
 	if s.secrets != nil {
 		v, err := s.secrets.Get(sshSecretKey(id))
 		if err == nil {
@@ -382,6 +409,14 @@ func (s *Store) SaveSSHProfile(p SSHProfile) error {
 		return err
 	}
 
+	if p.IdentityID != "" && !s.identityExists(p.IdentityID) {
+		p.IdentityID = ""
+	}
+	if p.IdentityID != "" {
+		// The identity owns the password; the host's own one is left alone.
+		p.Password, p.ClearPassword = "", false
+	}
+
 	// The password goes to the keychain only. If that fails the save fails:
 	// a password is never written to the database in plain text.
 	dbPassword := ""
@@ -405,9 +440,9 @@ func (s *Store) SaveSSHProfile(p SSHProfile) error {
 	if exists {
 		_, err = s.db.Exec(`
 UPDATE ssh_profiles SET name=?, host=?, port=?, username=?, auth_type=?, key_path=?, folder_id=?,
-    allow_legacy_algorithms=?, agent_forwarding=?, jump_profile_id=?, tunnels=?, sftp_only=?
+    allow_legacy_algorithms=?, agent_forwarding=?, jump_profile_id=?, tunnels=?, sftp_only=?, identity_id=?
 WHERE id=?`, p.Name, p.Host, p.Port, p.Username, p.AuthType, p.KeyPath, p.FolderID,
-			boolInt(p.AllowLegacyAlgorithms), boolInt(p.AgentForwarding), p.JumpProfileID, string(tunnelsJSON), boolInt(p.SFTPOnly), p.ID)
+			boolInt(p.AllowLegacyAlgorithms), boolInt(p.AgentForwarding), p.JumpProfileID, string(tunnelsJSON), boolInt(p.SFTPOnly), p.IdentityID, p.ID)
 		if err != nil {
 			return err
 		}
@@ -421,9 +456,9 @@ WHERE id=?`, p.Name, p.Host, p.Port, p.Username, p.AuthType, p.KeyPath, p.Folder
 		return err
 	}
 
-	_, err = s.db.Exec(`INSERT INTO ssh_profiles (`+sshColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	_, err = s.db.Exec(`INSERT INTO ssh_profiles (`+sshColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		p.ID, p.Name, p.Host, p.Port, p.Username, p.AuthType, dbPassword, p.KeyPath, p.FolderID, sortOrder,
-		boolInt(p.AllowLegacyAlgorithms), boolInt(p.AgentForwarding), p.JumpProfileID, string(tunnelsJSON), boolInt(p.SFTPOnly))
+		boolInt(p.AllowLegacyAlgorithms), boolInt(p.AgentForwarding), p.JumpProfileID, string(tunnelsJSON), boolInt(p.SFTPOnly), p.IdentityID)
 	return err
 }
 
@@ -460,6 +495,7 @@ func (s *Store) GetSSHProfile(id string) (SSHProfile, error) {
 		return p, fmt.Errorf("get ssh profile: %w", err)
 	}
 	p.HasPassword = dbPassword != "" || s.hasSecret(p.ID)
+	s.applyIdentity(&p)
 	return p, nil
 }
 

@@ -100,7 +100,7 @@ func (m *ConnectionManager) Connect(req ConnectRequest) error {
 	// Dial without holding the lock so other tabs stay responsive.
 	conn, err := newManagedConnection(req, m)
 	if err != nil {
-		m.emitter.Emit("connection:state:"+req.ID, "disconnected")
+		m.emitter.Emit("connection:state:"+req.ID, "disconnected", CloseFailed)
 		return err
 	}
 
@@ -126,6 +126,14 @@ func (m *ConnectionManager) Connect(req ConnectRequest) error {
 	return nil
 }
 
+// Reasons sent as the second value of connection:state:{id} = "disconnected".
+const (
+	CloseExit   = "exit"   // the remote shell ended (`exit`, logout)
+	CloseLost   = "lost"   // network drop, keepalive timeout, server went away
+	CloseByUser = "closed" // Disconnect was called
+	CloseFailed = "failed" // the connect attempt itself failed
+)
+
 // handleClosed runs when a connection drops for any reason (shell exit,
 // network loss, keepalive timeout, explicit disconnect).
 func (m *ConnectionManager) handleClosed(id string, conn *ManagedConnection) {
@@ -137,7 +145,11 @@ func (m *ConnectionManager) handleClosed(id string, conn *ManagedConnection) {
 	m.mu.Unlock()
 	_ = conn.Close()
 	if current {
-		m.emitter.Emit("connection:state:"+id, "disconnected")
+		reason := CloseLost
+		if conn.shellExited.Load() {
+			reason = CloseExit
+		}
+		m.emitter.Emit("connection:state:"+id, "disconnected", reason)
 	}
 }
 
@@ -150,14 +162,14 @@ func (m *ConnectionManager) Disconnect(id string) error {
 	m.mu.Unlock()
 	if st != nil {
 		st.close()
-		m.emitter.Emit("connection:state:"+id, "disconnected")
+		m.emitter.Emit("connection:state:"+id, "disconnected", CloseByUser)
 		return nil
 	}
 	if !ok {
 		return nil
 	}
 	err := conn.Close()
-	m.emitter.Emit("connection:state:"+id, "disconnected")
+	m.emitter.Emit("connection:state:"+id, "disconnected", CloseByUser)
 	return err
 }
 

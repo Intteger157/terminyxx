@@ -4,6 +4,7 @@ import { Section } from './SettingsDialog';
 import { Toggle } from '../terminal/ConnectDialog';
 import { useDialogs } from '../ui/Dialogs';
 import { ExportSync, ImportSync } from '../../../wailsjs/go/main/App';
+import { reloadIdentities } from '../../lib/identities';
 
 /** Fired after an import so the sidebar reloads its hosts. */
 export const LIBRARY_CHANGED = 'terminyxx:library-changed';
@@ -35,9 +36,10 @@ export function SyncSection() {
     setBusy('import');
     try {
       const r = await ImportSync(passphrase);
-      if (r.hosts + r.folders + r.snippets === 0) return;
+      if (r.hosts + r.folders + r.snippets + r.identities === 0) return;
       window.dispatchEvent(new Event(LIBRARY_CHANGED));
-      dialogs.toast(`Merged ${r.hosts} hosts, ${r.folders} folders and ${r.snippets} snippets.`, 'success');
+      void reloadIdentities();
+      dialogs.toast(`Merged ${r.hosts} hosts, ${r.identities} identities, ${r.folders} folders and ${r.snippets} snippets.`, 'success');
       if (r.replaced?.length) {
         dialogs.toast(`Updated the address of existing hosts: ${r.replaced.join(', ')}. Check them before connecting.`, 'error');
       }
@@ -55,7 +57,7 @@ export function SyncSection() {
     <div className="space-y-6">
       <Section title="Encrypted sync file">
         <p className="text-[12.5px] text-gray-400 leading-relaxed">
-          Save your hosts, folders and snippets to one encrypted file and open it on another computer. Keep the file in Dropbox, OneDrive, iCloud, a USB drive or a git repository: without the passphrase it cannot be read, and the passphrase never leaves this
+          Save your hosts, identities, folders and snippets to one encrypted file and open it on another computer. Keep the file in Dropbox, OneDrive, iCloud, a USB drive or a git repository: without the passphrase it cannot be read, and the passphrase never leaves this
           computer.
         </p>
         <div className="mt-4 grid grid-cols-2 gap-2">

@@ -61,6 +61,9 @@ type ManagedConnection struct {
 	// jumps are the intermediate SSH clients of a ProxyJump chain, closed
 	// together with the connection.
 	jumps []*ssh.Client
+	// shellExited is set when the remote shell ended on its own (`exit`,
+	// logout), as opposed to the network or the server going away.
+	shellExited atomic.Bool
 }
 
 // dialSSH connects to req, going through req.Jump (ProxyJump) first. It
@@ -293,8 +296,12 @@ func (c *ManagedConnection) StartShell(cols, rows int) error {
 	c.noteSize(cols, rows)
 	client := c.client
 	opts := ptyOptions{gate: c.gate, mask: c.mask, forwardAgent: c.agentConn != nil, recorder: c.rec.Load}
-	pty, err := NewPTYSession(client, c.emitter, c.ID, cols, rows, opts, func() {
+	pty, err := NewPTYSession(client, c.emitter, c.ID, cols, rows, opts, func(err error) {
 		// Shell exited (e.g. `exit`): drop the whole connection.
+		var exitErr *ssh.ExitError
+		if err == nil || errors.As(err, &exitErr) {
+			c.shellExited.Store(true)
+		}
 		_ = client.Close()
 	})
 	if err != nil {

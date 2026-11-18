@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { ReactNode } from 'react';
-import { ArrowDown, ArrowUp, Check, Download, Highlighter, Info, Loader2, RefreshCw, Keyboard, Palette, Pencil, Plus, RotateCcw, ShieldCheck, CloudUpload, SquareTerminal, Trash2, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, Check, Download, Highlighter, Info, Loader2, RefreshCw, Keyboard, Palette, Pencil, Plus, RotateCcw, ShieldCheck, CloudUpload, SquareTerminal, Trash2, UserRound, X } from 'lucide-react';
 import { Modal } from '../ui/Dialogs';
 import { Select } from '../ui/Select';
 import { TerminalPreview } from './TerminalPreview';
@@ -11,17 +11,19 @@ import type { TerminalTheme } from '../../lib/themes';
 import { compileRule } from '../../lib/highlight';
 import { SecuritySection } from './SecuritySection';
 import { SyncSection } from './SyncSection';
+import { IdentitiesSection } from './IdentitiesSection';
 import { OpenURL } from '../../../wailsjs/go/main/App';
 import { checkForUpdate, useUpdates } from '../../lib/updates';
 import { parseReleaseNotes } from '../../lib/releaseNotes';
 
-export type SettingsSection = 'appearance' | 'terminal' | 'highlight' | 'security' | 'sync' | 'shortcuts' | 'about';
+export type SettingsSection = 'appearance' | 'terminal' | 'highlight' | 'security' | 'identities' | 'sync' | 'shortcuts' | 'about';
 
 const SECTIONS: { id: SettingsSection; label: string; icon: ReactNode }[] = [
   { id: 'appearance', label: 'Appearance', icon: <Palette size={15} /> },
   { id: 'terminal', label: 'Terminal', icon: <SquareTerminal size={15} /> },
   { id: 'highlight', label: 'Highlighting', icon: <Highlighter size={15} /> },
   { id: 'security', label: 'Security', icon: <ShieldCheck size={15} /> },
+  { id: 'identities', label: 'Identities', icon: <UserRound size={15} /> },
   { id: 'sync', label: 'Sync', icon: <CloudUpload size={15} /> },
   { id: 'shortcuts', label: 'Shortcuts', icon: <Keyboard size={15} /> },
   { id: 'about', label: 'About', icon: <Info size={15} /> },
@@ -53,6 +55,7 @@ export function SettingsDialog({ modKey, initial = 'appearance', onClose }: { mo
           {section === 'terminal' && <TerminalSection settings={settings} />}
           {section === 'highlight' && <HighlightSection settings={settings} />}
           {section === 'security' && <SecuritySection settings={settings} modKey={modKey} />}
+          {section === 'identities' && <IdentitiesSection />}
           {section === 'sync' && <SyncSection />}
           {section === 'shortcuts' && <ShortcutsSection modKey={modKey} />}
           {section === 'about' && <AboutSection settings={settings} />}
@@ -174,6 +177,15 @@ function TerminalSection({ settings }: { settings: AppSettings }) {
       <Section title="Buffer">
         <Row label="Scrollback" hint="Lines kept in history for each terminal. More lines use more memory.">
           <Select className="w-44" value={String(t.scrollback)} options={scrollOptions} onChange={(v) => set({ scrollback: Number(v) })} />
+        </Row>
+      </Section>
+
+      <Section title="Sessions">
+        <Row label="Reconnect automatically" hint="When an SSH connection drops (network, sleep, server restart), try again after 1, 2, 4… up to 30 seconds, for about five minutes. Typing exit never reconnects.">
+          <Toggle checked={settings.sessions.autoReconnect} onChange={(v) => updateSettings((s) => ({ ...s, sessions: { ...s.sessions, autoReconnect: v } }))} />
+        </Row>
+        <Row label="Restore tabs at startup" hint="Reopen the saved hosts and split layout that were open when Terminyxx closed. To keep layouts by name, save them as workspaces from the command palette or a tab's menu.">
+          <Toggle checked={settings.sessions.restore} onChange={(v) => updateSettings((s) => ({ ...s, sessions: { ...s.sessions, restore: v } }))} />
         </Row>
       </Section>
 

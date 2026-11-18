@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { ArrowRight, Plus, TerminalSquare, Upload } from 'lucide-react';
+import { ArrowRight, LayoutGrid, Plus, TerminalSquare, Trash2, Upload } from 'lucide-react';
+import type { Workspace } from '../../lib/workspaces';
 import type { SSHProfile } from '../../types';
 import { Avatar } from '../ui/Avatar';
 import { modKey, parseQuickTarget } from '../../lib/hosts';
@@ -12,9 +13,12 @@ interface WelcomeProps {
   onQuickConnect: (target: QuickTarget) => void;
   onNew: () => void;
   onImport: () => void;
+  workspaces: Workspace[];
+  onOpenWorkspace: (w: Workspace) => void;
+  onDeleteWorkspace: (w: Workspace) => void;
 }
 
-export function Welcome({ platform, profiles, onConnect, onQuickConnect, onNew, onImport }: WelcomeProps) {
+export function Welcome({ platform, profiles, onConnect, onQuickConnect, onNew, onImport, workspaces, onOpenWorkspace, onDeleteWorkspace }: WelcomeProps) {
   const [value, setValue] = useState('');
   const target = parseQuickTarget(value);
   const mod = modKey(platform);
@@ -61,6 +65,40 @@ export function Welcome({ platform, profiles, onConnect, onQuickConnect, onNew, 
             ? `SSH to ${target.username ? target.username + '@' : ''}${target.host} on port ${target.port}`
             : 'Type an address like root@10.0.0.5 or deploy@example.com:2222'}
         </p>
+
+        {workspaces.length > 0 && (
+          <div className="mt-10">
+            <h2 className="label mb-3">Workspaces</h2>
+            <div className="grid grid-cols-2 gap-2">
+              {workspaces.map((w) => {
+                const panes = Object.keys(w.panes).length;
+                return (
+                  <div key={w.id} className="group card flex items-center gap-3 px-3 py-2.5 hover:border-border-strong hover:bg-surface-raised transition-all">
+                    <button className="flex items-center gap-3 min-w-0 flex-1 text-left" onClick={() => onOpenWorkspace(w)}>
+                      <span className="w-8 h-8 rounded-lg bg-accent/10 text-accent flex items-center justify-center flex-shrink-0">
+                        <LayoutGrid size={15} />
+                      </span>
+                      <span className="min-w-0">
+                        <span className="block font-medium text-gray-200 truncate">{w.name}</span>
+                        <span className="block text-2xs text-gray-500 truncate">
+                          {w.groups.length} tab{w.groups.length === 1 ? '' : 's'} · {panes} session{panes === 1 ? '' : 's'}
+                        </span>
+                      </span>
+                    </button>
+                    <button
+                      className="btn-ghost h-7 w-7 p-0 justify-center opacity-0 group-hover:opacity-100 focus:opacity-100 hover:text-red-300"
+                      title="Delete workspace"
+                      aria-label={`Delete workspace ${w.name}`}
+                      onClick={() => onDeleteWorkspace(w)}
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         <div className="mt-10">
           <div className="flex items-center justify-between mb-3">

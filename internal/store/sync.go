@@ -17,13 +17,17 @@ type Bundle struct {
 	SSH      []SSHProfile     `json:"ssh"`
 	RDP      []rdp.RDPProfile `json:"rdp"`
 	Snippets []Snippet        `json:"snippets"`
+	// Identities appeared after version 1 shipped; older files have none and
+	// older apps ignore the field (hosts then keep their own copied login).
+	Identities []Identity `json:"identities,omitempty"`
 }
 
 // ImportResult counts what an import added or replaced.
 type ImportResult struct {
 	Folders  int `json:"folders"`
 	Hosts    int `json:"hosts"`
-	Snippets int `json:"snippets"`
+	Snippets   int `json:"snippets"`
+	Identities int `json:"identities"`
 	// Replaced lists existing hosts whose address, user or jump host the
 	// import changed, so the UI can tell the user.
 	Replaced []string `json:"replaced"`
@@ -39,6 +43,19 @@ func (s *Store) ExportBundle(includePasswords bool) (Bundle, error) {
 	var err error
 	if b.Folders, err = s.ListFolders(); err != nil {
 		return b, err
+	}
+	idents, err := s.ListIdentities()
+	if err != nil {
+		return b, err
+	}
+	for _, i := range idents {
+		i.Password, i.HasPassword, i.ClearPassword, i.Hosts = "", false, false, 0
+		if includePasswords {
+			if i.Password, err = s.IdentityPassword(i.ID); err != nil {
+				return b, err
+			}
+		}
+		b.Identities = append(b.Identities, i)
 	}
 	ssh, err := s.ListSSHProfiles()
 	if err != nil {
@@ -111,6 +128,13 @@ func (s *Store) ImportBundle(b Bundle) (ImportResult, error) {
 			break
 		}
 		pending = rest
+	}
+
+	for _, i := range b.Identities {
+		if err := s.SaveIdentity(i); err != nil {
+			return res, err
+		}
+		res.Identities++
 	}
 
 	for _, p := range b.SSH {

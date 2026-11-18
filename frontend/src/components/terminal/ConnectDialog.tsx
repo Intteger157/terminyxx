@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
-import { ChevronRight, Folder, FolderOpen, KeyRound, Layers, Lock, ShieldAlert } from 'lucide-react';
+import { ChevronRight, Folder, FolderOpen, KeyRound, Layers, Lock, PenLine, ShieldAlert, UserRound } from 'lucide-react';
+import { identitySummary, useIdentities } from '../../lib/identities';
 import { Select } from '../ui/Select';
 import type { SavedTunnel, SSHProfile } from '../../types';
 import { JumpHostSelect, TunnelEditor } from './TunnelEditor';
@@ -61,6 +62,9 @@ export function ConnectDialog({ initial, folders, onClose, onConnect, onSwitchTo
   const [jumpProfileId, setJumpProfileId] = useState(initial?.jumpProfileId ?? '');
   const [tunnels, setTunnels] = useState<SavedTunnel[]>(initial?.tunnels ?? []);
   const [network, setNetwork] = useState(!!initial?.jumpProfileId || (initial?.tunnels?.length ?? 0) > 0);
+  const identities = useIdentities();
+  const [identityId, setIdentityId] = useState(initial?.identityId ?? '');
+  const ident = identities.find((i) => i.id === identityId);
   const dialogs = useDialogs();
   const sshSec = useSettings().security.ssh;
 
@@ -75,15 +79,17 @@ export function ConnectDialog({ initial, folders, onClose, onConnect, onSwitchTo
   const formRef = useRef<HTMLFormElement>(null);
   const build = (): SSHProfile => ({
         id: initial?.id ?? crypto.randomUUID(),
-        name: name.trim() || `${username}@${host}`,
+        name: name.trim() || `${ident ? ident.username : username.trim()}@${host.trim()}`,
         host: host.trim(),
         port: Number(port) || 22,
-        username: username.trim(),
-        authType,
-        password,
-        hasPassword: savedPassword && !password,
-        clearPassword: forgetPassword && !password,
-        keyPath: keyPath.trim(),
+        // With an identity the login is the identity's; the backend applies it too.
+        username: ident ? ident.username : username.trim(),
+        authType: ident ? ident.authType : authType,
+        password: ident ? '' : password,
+        hasPassword: ident ? !!ident.hasPassword : savedPassword && !password,
+        clearPassword: !ident && forgetPassword && !password,
+        keyPath: ident ? ident.keyPath : keyPath.trim(),
+        identityId: ident ? ident.id : '',
         folderId,
         allowLegacyAlgorithms: allowLegacy,
         agentForwarding,
@@ -133,88 +139,105 @@ export function ConnectDialog({ initial, folders, onClose, onConnect, onSwitchTo
           </Field>
         </div>
 
-        <Field label="Username">
-          <input
-            className="input-field font-mono"
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            required
-            autoFocus={focus === 'username'}
-            placeholder="root"
-            spellCheck={false}
-          />
-        </Field>
+        {identities.length > 0 && (
+          <Field label="Login" hint={ident ? `${identitySummary(ident)}. Edit it in Settings → Identities.` : 'Use a saved identity, or enter the user and password for this host.'}>
+            <Select
+              value={identityId}
+              onChange={setIdentityId}
+              options={[
+                { value: '', label: 'Enter for this host', icon: <PenLine size={13} className="text-gray-500" /> },
+                ...identities.map((i) => ({ value: i.id, label: `${i.name} (${i.username})`, icon: <UserRound size={13} className="text-gray-400" /> })),
+              ]}
+            />
+          </Field>
+        )}
 
-        <div>
-          <span className="label">Authentication</span>
-          <div className="grid grid-cols-2 gap-1 p-1 bg-black/30 rounded-xl border border-border">
-            {(
-              [
-                ['password', 'Password', <Lock key="p" size={13} />],
-                ['key', 'SSH key', <KeyRound key="k" size={13} />],
-              ] as const
-            ).map(([value, label, icon]) => (
-              <button
-                key={value}
-                type="button"
-                className={`flex items-center justify-center gap-1.5 h-7 text-[12.5px] font-medium rounded-lg transition-all ${
-                  authType === value ? 'bg-white/[0.09] text-gray-100 shadow-[inset_0_0_0_1px_rgb(255_255_255/0.08)]' : 'text-gray-500 hover:text-gray-300'
-                }`}
-                onClick={() => setAuthType(value)}
-              >
-                {icon}
-                {label}
-              </button>
-            ))}
-          </div>
-        </div>
+        {!ident && (
+          <>
+          <Field label="Username">
+            <input
+              className="input-field font-mono"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              required
+              autoFocus={focus === 'username'}
+              placeholder="root"
+              spellCheck={false}
+            />
+          </Field>
 
-        {authType === 'password' ? (
-          <Field
-            label="Password"
-            hint={
-              savedPassword
-                ? 'Saved in the system keychain. Type a new one to replace it.'
-                : saveProfile || editing
-                  ? 'Stored in the system keychain, not in the app database.'
-                  : undefined
-            }
-          >
-            <div className="relative">
-              <input
-                className="input-field pr-24"
-                type="password"
-                value={password}
-                autoFocus={focus === 'password'}
-                placeholder={savedPassword ? '••••••••  saved' : ''}
-                onChange={(e) => setPassword(e.target.value)}
-              />
-              {savedPassword && !password && (
+          <div>
+            <span className="label">Authentication</span>
+            <div className="grid grid-cols-2 gap-1 p-1 bg-black/30 rounded-xl border border-border">
+              {(
+                [
+                  ['password', 'Password', <Lock key="p" size={13} />],
+                  ['key', 'SSH key', <KeyRound key="k" size={13} />],
+                ] as const
+              ).map(([value, label, icon]) => (
                 <button
+                  key={value}
                   type="button"
-                  className="absolute right-1.5 top-1/2 -translate-y-1/2 h-6 px-2 rounded-md text-2xs text-gray-400 hover:text-red-300 hover:bg-red-500/10"
-                  onClick={() => setForgetPassword(true)}
+                  className={`flex items-center justify-center gap-1.5 h-7 text-[12.5px] font-medium rounded-lg transition-all ${
+                    authType === value ? 'bg-white/[0.09] text-gray-100 shadow-[inset_0_0_0_1px_rgb(255_255_255/0.08)]' : 'text-gray-500 hover:text-gray-300'
+                  }`}
+                  onClick={() => setAuthType(value)}
                 >
-                  Forget
+                  {icon}
+                  {label}
                 </button>
-              )}
+              ))}
             </div>
-          </Field>
-        ) : (
-          <Field label="Private key" hint="Leave empty to use the default keys in ~/.ssh">
-            <div className="flex gap-2">
-              <input
-                className="input-field font-mono"
-                value={keyPath}
-                onChange={(e) => setKeyPath(e.target.value)}
-                placeholder="~/.ssh/id_ed25519"
-                spellCheck={false}
-              />
-              <button type="button" className="btn-secondary h-9 px-2.5 flex-shrink-0" onClick={browseKey} title="Browse">
-                <FolderOpen size={14} />
-              </button>
-            </div>
-          </Field>
+          </div>
+
+          {authType === 'password' ? (
+            <Field
+              label="Password"
+              hint={
+                savedPassword
+                  ? 'Saved in the system keychain. Type a new one to replace it.'
+                  : saveProfile || editing
+                    ? 'Stored in the system keychain, not in the app database.'
+                    : undefined
+              }
+            >
+              <div className="relative">
+                <input
+                  className="input-field pr-24"
+                  type="password"
+                  value={password}
+                  autoFocus={focus === 'password'}
+                  placeholder={savedPassword ? '••••••••  saved' : ''}
+                  onChange={(e) => setPassword(e.target.value)}
+                />
+                {savedPassword && !password && (
+                  <button
+                    type="button"
+                    className="absolute right-1.5 top-1/2 -translate-y-1/2 h-6 px-2 rounded-md text-2xs text-gray-400 hover:text-red-300 hover:bg-red-500/10"
+                    onClick={() => setForgetPassword(true)}
+                  >
+                    Forget
+                  </button>
+                )}
+              </div>
+            </Field>
+          ) : (
+            <Field label="Private key" hint="Leave empty to use the default keys in ~/.ssh">
+              <div className="flex gap-2">
+                <input
+                  className="input-field font-mono"
+                  value={keyPath}
+                  onChange={(e) => setKeyPath(e.target.value)}
+                  placeholder="~/.ssh/id_ed25519"
+                  spellCheck={false}
+                />
+                <button type="button" className="btn-secondary h-9 px-2.5 flex-shrink-0" onClick={browseKey} title="Browse">
+                  <FolderOpen size={14} />
+                </button>
+              </div>
+            </Field>
+          )}
+          </>
         )}
 
         <div>
@@ -288,7 +311,7 @@ export function ConnectDialog({ initial, folders, onClose, onConnect, onSwitchTo
         {(editing || saveProfile) && (
           <div className="grid grid-cols-2 gap-2 animate-fade-in">
             <Field label="Name">
-              <input className="input-field" value={name} onChange={(e) => setName(e.target.value)} placeholder={`${username || 'user'}@${host || 'host'}`} />
+              <input className="input-field" value={name} onChange={(e) => setName(e.target.value)} placeholder={`${(ident ? ident.username : username) || 'user'}@${host || 'host'}`} />
             </Field>
             <Field label="Folder">
               <Select

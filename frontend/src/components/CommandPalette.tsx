@@ -6,7 +6,7 @@ import type { QuickTarget } from '../lib/hosts';
 
 export interface PaletteItem {
   id: string;
-  group: 'Connect' | 'Hosts' | 'Tabs' | 'Actions';
+  group: 'Connect' | 'Hosts' | 'Workspaces' | 'Tabs' | 'Actions';
   label: string;
   hint?: string;
   icon?: ReactNode;
@@ -21,7 +21,7 @@ interface CommandPaletteProps {
   onClose: () => void;
 }
 
-const GROUP_ORDER: PaletteItem['group'][] = ['Connect', 'Hosts', 'Tabs', 'Actions'];
+const GROUP_ORDER: PaletteItem['group'][] = ['Connect', 'Hosts', 'Workspaces', 'Tabs', 'Actions'];
 
 /** Subsequence match; lower score is better. */
 function score(text: string, q: string): number | null {

@@ -33,6 +33,24 @@ export interface SSHProfile {
   tunnels?: SavedTunnel[];
   /** The server offers SFTP but no shell: open the file manager, no terminal. */
   sftpOnly?: boolean;
+  /** Saved identity whose login (user, password or key) this host uses. */
+  identityId?: string;
+}
+
+/** A reusable login shared by SSH hosts. */
+export interface Identity {
+  id: string;
+  name: string;
+  username: string;
+  authType: string;
+  /** Write-only, like SSHProfile.password. */
+  password: string;
+  hasPassword?: boolean;
+  clearPassword?: boolean;
+  keyPath: string;
+  sortOrder?: number;
+  /** How many hosts use it (read-only). */
+  hosts?: number;
 }
 
 export type TunnelKind = 'local' | 'remote' | 'dynamic';
@@ -112,6 +130,8 @@ export interface TerminalTab {
   rdp?: RDPProfile;
   /** The current single-use RDP session ticket; a new one restarts the pane. */
   rdpSession?: main.RDPSession;
+  /** Automatic reconnect after a dropped connection: the next attempt and when it runs (ms). */
+  retry?: { attempt: number; at: number };
 }
 
 export interface StreamSpec {

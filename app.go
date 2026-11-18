@@ -629,6 +629,40 @@ func (a *App) DeleteSSHProfile(id string) error {
 	return a.data.DeleteSSHProfile(id)
 }
 
+// Identity bindings: reusable logins shared by SSH hosts.
+
+func (a *App) ListIdentities() ([]store.Identity, error) {
+	if err := a.guard(); err != nil {
+		return nil, err
+	}
+	if a.data == nil {
+		return []store.Identity{}, nil
+	}
+	return a.data.ListIdentities()
+}
+
+func (a *App) SaveIdentity(i store.Identity) error {
+	if err := a.guard(); err != nil {
+		return err
+	}
+	if a.data == nil {
+		return errors.New("storage unavailable")
+	}
+	return a.data.SaveIdentity(i)
+}
+
+// DeleteIdentity removes an identity; hosts that used it keep a copy of its
+// login and password.
+func (a *App) DeleteIdentity(id string) error {
+	if err := a.guard(); err != nil {
+		return err
+	}
+	if a.data == nil {
+		return errors.New("storage unavailable")
+	}
+	return a.data.DeleteIdentity(id)
+}
+
 func (a *App) ListRDPProfiles() ([]rdp.RDPProfile, error) {
 	if err := a.guard(); err != nil {
 		return nil, err
@@ -733,6 +767,43 @@ func (a *App) SetCaptureProtection(enabled bool) error {
 // GetScreenSharing reports whether another app is capturing the screen now.
 func (a *App) GetScreenSharing() capture.SharingState {
 	return capture.DetectSharing()
+}
+
+// uiStateKeys are the UI blobs kept in the database next to the settings:
+// named workspaces and the layout to restore at the next start.
+var uiStateKeys = map[string]bool{"workspaces": true, "session": true}
+
+const maxUIState = 1 << 20
+
+// GetUIState returns a UI state blob (JSON written by the frontend), or "".
+func (a *App) GetUIState(key string) (string, error) {
+	if err := a.guard(); err != nil {
+		return "", err
+	}
+	if !uiStateKeys[key] {
+		return "", fmt.Errorf("unknown UI state %q", key)
+	}
+	if a.data == nil {
+		return "", nil
+	}
+	return a.data.GetSetting("ui." + key)
+}
+
+// SaveUIState stores a UI state blob.
+func (a *App) SaveUIState(key, value string) error {
+	if err := a.guard(); err != nil {
+		return err
+	}
+	if !uiStateKeys[key] {
+		return fmt.Errorf("unknown UI state %q", key)
+	}
+	if len(value) > maxUIState {
+		return errors.New("UI state is too large")
+	}
+	if a.data == nil {
+		return nil
+	}
+	return a.data.SetSetting("ui."+key, value)
 }
 
 func (a *App) ListFolders() ([]store.Folder, error) {

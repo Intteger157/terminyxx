@@ -20,6 +20,8 @@ export function ClipboardWrite(arg1:string,arg2:boolean):Promise<number>;
 
 export function DeleteFolder(arg1:string):Promise<void>;
 
+export function DeleteIdentity(arg1:string):Promise<void>;
+
 export function DeleteRDPProfile(arg1:string):Promise<void>;
 
 export function DeleteRecording(arg1:string):Promise<void>;
@@ -42,6 +44,8 @@ export function GetScreenSharing():Promise<capture.SharingState>;
 
 export function GetSettings():Promise<string>;
 
+export function GetUIState(arg1:string):Promise<string>;
+
 export function HostStats(arg1:string):Promise<connection.HostStats>;
 
 export function ImportSync(arg1:string):Promise<store.ImportResult>;
@@ -53,6 +57,8 @@ export function LaunchRDP(arg1:string):Promise<void>;
 export function ListContainers(arg1:string,arg2:string):Promise<Array<connection.Container>>;
 
 export function ListFolders():Promise<Array<store.Folder>>;
+
+export function ListIdentities():Promise<Array<store.Identity>>;
 
 export function ListImportSources():Promise<Array<importers.SourceInfo>>;
 
@@ -162,6 +168,8 @@ export function SSHWriteInput(arg1:string,arg2:string):Promise<void>;
 
 export function SaveFolder(arg1:store.Folder):Promise<void>;
 
+export function SaveIdentity(arg1:store.Identity):Promise<void>;
+
 export function SaveRDPProfile(arg1:rdp.RDPProfile):Promise<void>;
 
 export function SaveSSHProfile(arg1:store.SSHProfile):Promise<void>;
@@ -169,6 +177,8 @@ export function SaveSSHProfile(arg1:store.SSHProfile):Promise<void>;
 export function SaveSettings(arg1:string):Promise<void>;
 
 export function SaveSnippet(arg1:store.Snippet):Promise<void>;
+
+export function SaveUIState(arg1:string,arg2:string):Promise<void>;
 
 export function SearchRecordings(arg1:string):Promise<Array<recording.Hit>>;
 

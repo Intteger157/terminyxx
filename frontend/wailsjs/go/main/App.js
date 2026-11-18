@@ -18,6 +18,10 @@ export function DeleteFolder(arg1) {
   return window['go']['main']['App']['DeleteFolder'](arg1);
 }
 
+export function DeleteIdentity(arg1) {
+  return window['go']['main']['App']['DeleteIdentity'](arg1);
+}
+
 export function DeleteRDPProfile(arg1) {
   return window['go']['main']['App']['DeleteRDPProfile'](arg1);
 }
@@ -62,6 +66,10 @@ export function GetSettings() {
   return window['go']['main']['App']['GetSettings']();
 }
 
+export function GetUIState(arg1) {
+  return window['go']['main']['App']['GetUIState'](arg1);
+}
+
 export function HostStats(arg1) {
   return window['go']['main']['App']['HostStats'](arg1);
 }
@@ -84,6 +92,10 @@ export function ListContainers(arg1, arg2) {
 
 export function ListFolders() {
   return window['go']['main']['App']['ListFolders']();
+}
+
+export function ListIdentities() {
+  return window['go']['main']['App']['ListIdentities']();
 }
 
 export function ListImportSources() {
@@ -302,6 +314,10 @@ export function SaveFolder(arg1) {
   return window['go']['main']['App']['SaveFolder'](arg1);
 }
 
+export function SaveIdentity(arg1) {
+  return window['go']['main']['App']['SaveIdentity'](arg1);
+}
+
 export function SaveRDPProfile(arg1) {
   return window['go']['main']['App']['SaveRDPProfile'](arg1);
 }
@@ -316,6 +332,10 @@ export function SaveSettings(arg1) {
 
 export function SaveSnippet(arg1) {
   return window['go']['main']['App']['SaveSnippet'](arg1);
+}
+
+export function SaveUIState(arg1, arg2) {
+  return window['go']['main']['App']['SaveUIState'](arg1, arg2);
 }
 
 export function SearchRecordings(arg1) {

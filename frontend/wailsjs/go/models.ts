@@ -800,10 +800,41 @@ export namespace store {
 	        this.sortOrder = source["sortOrder"];
 	    }
 	}
+	export class Identity {
+	    id: string;
+	    name: string;
+	    username: string;
+	    authType: string;
+	    password: string;
+	    hasPassword: boolean;
+	    clearPassword: boolean;
+	    keyPath: string;
+	    sortOrder: number;
+	    hosts: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new Identity(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.username = source["username"];
+	        this.authType = source["authType"];
+	        this.password = source["password"];
+	        this.hasPassword = source["hasPassword"];
+	        this.clearPassword = source["clearPassword"];
+	        this.keyPath = source["keyPath"];
+	        this.sortOrder = source["sortOrder"];
+	        this.hosts = source["hosts"];
+	    }
+	}
 	export class ImportResult {
 	    folders: number;
 	    hosts: number;
 	    snippets: number;
+	    identities: number;
 	    replaced: string[];
 	    flagsReset: number;
 	
@@ -816,6 +847,7 @@ export namespace store {
 	        this.folders = source["folders"];
 	        this.hosts = source["hosts"];
 	        this.snippets = source["snippets"];
+	        this.identities = source["identities"];
 	        this.replaced = source["replaced"];
 	        this.flagsReset = source["flagsReset"];
 	    }
@@ -862,6 +894,7 @@ export namespace store {
 	    jumpProfileId: string;
 	    tunnels: Tunnel[];
 	    sftpOnly: boolean;
+	    identityId: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new SSHProfile(source);
@@ -886,6 +919,7 @@ export namespace store {
 	        this.jumpProfileId = source["jumpProfileId"];
 	        this.tunnels = this.convertValues(source["tunnels"], Tunnel);
 	        this.sftpOnly = source["sftpOnly"];
+	        this.identityId = source["identityId"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

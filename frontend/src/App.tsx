@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Circle, Columns2, Copy, EyeOff, ScrollText, FolderPlus, FolderTree, Loader2, Lock, Monitor, PanelLeft, Plus, RotateCw, Rows2, Server, Settings, ShieldCheck, SquareArrowOutUpRight, SquareTerminal, Unplug, Upload, X } from 'lucide-react';
+import { Circle, Columns2, Copy, EyeOff, LayoutGrid, ScrollText, FolderPlus, FolderTree, Loader2, Lock, Monitor, PanelLeft, Plus, RotateCw, Rows2, Server, Settings, ShieldCheck, SquareArrowOutUpRight, SquareTerminal, Unplug, Upload, X } from 'lucide-react';
 import { Sidebar, MAX_WIDTH, MIN_WIDTH } from './components/sidebar/Sidebar';
 import { ImportDialog } from './components/sidebar/ImportDialog';
 import { useHostLibrary } from './components/sidebar/useHostLibrary';
@@ -35,7 +35,10 @@ import type { SettingsSection } from './components/settings/SettingsDialog';
 import { useDialogs, errorText, modalSwap } from './components/ui/Dialogs';
 import { checkForUpdate, loadVersion } from './lib/updates';
 import { useHotkeys } from './hooks/useHotkeys';
-import { ConnectCancelled, connectWithPrompts } from './lib/connect';
+import { ConnectCancelled, ConnectNeedsUser, connectWithPrompts } from './lib/connect';
+import { identityById, reloadIdentities, saveIdentity } from './lib/identities';
+import { deleteWorkspace, instantiate, loadLastSession, loadWorkspaces, prune, rememberSession, saveWorkspace, snapshot, useWorkspaces } from './lib/workspaces';
+import type { Workspace } from './lib/workspaces';
 import { LockScreen } from './components/security/LockScreen';
 import { lockNow, useAppLock } from './lib/appLock';
 import { setClipboardNotifier } from './lib/clipboard';
@@ -49,6 +52,10 @@ import { LaunchRDP, RDPClose, SaveRDPProfile, SaveSSHProfile, SSHDisconnect } fr
 type ConnectDialogState = { key: number; tabId: string | null; initial?: Partial<SSHProfile> } | null;
 
 const SIDEBAR_KEY = 'terminyxx.sidebar.v2';
+
+/** Automatic reconnect: delays 1, 2, 4, 8, 16, then 30 s; about five minutes in all. */
+const RETRY_MAX = 14;
+const retryDelay = (attempt: number) => Math.min(30, 2 ** (attempt - 1)) * 1000;
 
 interface SidebarPref {
   width: number;
@@ -194,10 +201,16 @@ function App() {
       .split(',')
       .filter(Boolean)
       .map((id) =>
-        EventsOn(`connection:state:${id}`, (state: string) => {
+        EventsOn(`connection:state:${id}`, (state: string, reason?: string) => {
           if (state === 'disconnected') {
+            // A dropped SSH connection (not `exit`, not a click) reconnects on its own.
+            const retry = reason === 'lost' && getSettings().sessions.autoReconnect;
             setTabs((prev) =>
-              prev.map((t) => (t.id === id && t.status === 'connected' ? { ...t, status: 'disconnected' } : t))
+              prev.map((t) =>
+                t.id === id && t.status === 'connected'
+                  ? { ...t, status: 'disconnected', retry: retry && t.profile && !t.stream && !t.rdp ? { attempt: 1, at: Date.now() + retryDelay(1) } : undefined }
+                  : t
+              )
             );
           }
         })
@@ -237,7 +250,10 @@ function App() {
         const saved = sshProfiles.find((p) => p.id === profile.id);
         if (res.rememberPassword && saved) {
           try {
-            await SaveSSHProfile(sshForSave({ ...saved, password: res.typedPassword }));
+            const ident = identityById(saved.identityId);
+            // A host that uses an identity keeps its password in the identity.
+            if (ident) await saveIdentity({ ...ident, password: res.typedPassword });
+            else await SaveSSHProfile(sshForSave({ ...saved, password: res.typedPassword }));
             tabProfile = { ...tabProfile, password: '', hasPassword: true };
             loadProfiles();
           } catch (err) {
@@ -258,6 +274,155 @@ function App() {
         dialogs.toast(`Could not connect to ${profile.host}: ${errorText(err)}`, 'error');
       }
       return false;
+    }
+  };
+
+  // --- automatic reconnect ---
+
+  const tabsRef = useRef(tabs);
+  tabsRef.current = tabs;
+
+  const autoReconnect = async (id: string) => {
+    const tab = tabsRef.current.find((t) => t.id === id);
+    if (!tab?.retry || tab.status !== 'disconnected' || !tab.profile) return;
+    const { attempt } = tab.retry;
+    // Use the saved host as it is now (its login may have changed meanwhile);
+    // keep a password typed for this session.
+    const saved = sshProfiles.find((p) => p.id === tab.profile!.id);
+    const profile = saved ? { ...saved, password: tab.profile.password } : tab.profile;
+    patchTab(id, { status: 'connecting' });
+    try {
+      await connectWithPrompts(id, profile, dialogs, { interactive: false });
+      patchTab(id, { status: 'connected', started: true, retry: undefined });
+      dialogs.toast(`Reconnected to ${tab.title}`, 'success');
+    } catch (err) {
+      if (!tabsRef.current.some((t) => t.id === id && t.retry)) return; // closed or cancelled meanwhile
+      if (err instanceof ConnectNeedsUser) {
+        patchTab(id, { status: 'disconnected', retry: undefined });
+        dialogs.toast(`Could not reconnect to ${tab.title} automatically: ${err.message}. Use Reconnect.`, 'error');
+      } else if (err instanceof ConnectCancelled) {
+        // App locked: try again later without using up an attempt.
+        patchTab(id, { status: 'disconnected', retry: { attempt, at: Date.now() + retryDelay(attempt) } });
+      } else if (attempt >= RETRY_MAX) {
+        patchTab(id, { status: 'disconnected', retry: undefined });
+        dialogs.toast(`Gave up reconnecting to ${tab.title}: ${errorText(err)}`, 'error');
+      } else {
+        patchTab(id, { status: 'disconnected', retry: { attempt: attempt + 1, at: Date.now() + retryDelay(attempt + 1) } });
+      }
+    }
+  };
+
+  const retryKey = tabs
+    .filter((t) => t.retry && t.status === 'disconnected')
+    .map((t) => `${t.id}:${t.retry!.at}`)
+    .join(',');
+  useEffect(() => {
+    if (!retryKey || lock.locked) return;
+    const timers = retryKey.split(',').map((entry) => {
+      const [id, at] = entry.split(':');
+      return window.setTimeout(() => void autoReconnect(id), Math.max(0, Number(at) - Date.now()));
+    });
+    return () => timers.forEach((t) => window.clearTimeout(t));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [retryKey, lock.locked]);
+
+  // The network is back (Wi-Fi, VPN, wake from sleep): try right away.
+  useEffect(() => {
+    const onOnline = () =>
+      setTabs((prev) => prev.map((t) => (t.retry && t.status === 'disconnected' ? { ...t, retry: { ...t.retry, at: Date.now() } } : t)));
+    window.addEventListener('online', onOnline);
+    return () => window.removeEventListener('online', onOnline);
+  }, []);
+
+  const cancelRetry = (id: string) => patchTab(id, { retry: undefined });
+
+  // --- workspaces and session restore ---
+
+  const workspaces = useWorkspaces();
+  const savedIds = useMemo(() => new Set([...sshProfiles.map((p) => p.id), ...rdpProfiles.map((p) => p.id)]), [sshProfiles, rdpProfiles]);
+  const restored = useRef(false);
+
+  const openWorkspace = async (ws: Workspace) => {
+    const exists = (p: { kind: string; profileId: string }) =>
+      p.kind === 'ssh' ? sshProfiles.some((x) => x.id === p.profileId) : getSettings().rdp.builtin && rdpProfiles.some((x) => x.id === p.profileId);
+    const inst = instantiate(prune(ws, exists));
+    if (inst.groups.length === 0) {
+      dialogs.toast(`The hosts of “${ws.name}” no longer exist.`, 'error');
+      return;
+    }
+    const opened = inst.panes.map(({ id, pane }) => {
+      const ssh = pane.kind === 'ssh' ? sshProfiles.find((x) => x.id === pane.profileId) : undefined;
+      const rdp = pane.kind === 'rdp' ? rdpProfiles.find((x) => x.id === pane.profileId) : undefined;
+      const p = (ssh ?? rdp)!;
+      const tab: TerminalTab = { id, title: p.name, host: p.host, status: 'idle', started: false, profile: ssh, rdp };
+      return { tab, ssh, rdp };
+    });
+    setTabs((prev) => [...prev, ...opened.map((o) => o.tab)]);
+    setGroups((prev) => [...prev, ...inst.groups]);
+    setActiveTabId(inst.active);
+    // One at a time, so host key or password questions don't pile up.
+    for (const o of opened) {
+      await new Promise((res) => window.setTimeout(res, 0)); // let the new tabs render first
+      if (!tabsRef.current.some((t) => t.id === o.tab.id)) continue; // closed meanwhile
+      if (o.ssh) await connectTab(o.tab.id, o.ssh);
+      else if (o.rdp) await connectRdp(o.tab.id, o.rdp);
+    }
+  };
+
+  // Once the hosts are loaded (after unlocking): read workspaces, reopen the last session.
+  useEffect(() => {
+    if (!library.loaded || restored.current) return;
+    void loadWorkspaces();
+    void reloadIdentities();
+    if (!getSettings().sessions.restore) {
+      restored.current = true;
+      return;
+    }
+    void loadLastSession().then((ws) => {
+      restored.current = true;
+      if (ws) void openWorkspace(ws);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [library.loaded]);
+
+  const restoreOn = useSettings().sessions.restore;
+  const layoutKey = JSON.stringify([groups, tabs.map((t) => [t.id, t.profile?.id, t.rdp?.id]), activeTabId]);
+  useEffect(() => {
+    if (!restored.current) return;
+    rememberSession(restoreOn ? snapshot('Last session', groups, tabs, activeTabId, savedIds) : null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [layoutKey, restoreOn, savedIds]);
+
+  const saveAsWorkspace = async (groupIds?: string[]) => {
+    const g = groupIds ? groups.find((x) => x.id === groupIds[0]) : undefined;
+    const first = tabs.find((t) => t.id === (g?.focus ?? activeTabId));
+    const name = await dialogs.prompt({
+      title: groupIds ? 'Save tab as workspace' : 'Save tabs as workspace',
+      label: 'Workspace name (an existing one with this name is replaced):',
+      defaultValue: first?.title ?? '',
+      confirmLabel: 'Save',
+    });
+    if (!name?.trim()) return;
+    const ws = snapshot(name.trim(), groups, tabs, activeTabId, savedIds, groupIds);
+    if (!ws) {
+      dialogs.toast('Only saved hosts can be part of a workspace. Save the host first.', 'error');
+      return;
+    }
+    try {
+      await saveWorkspace(ws);
+      dialogs.toast(`Saved workspace “${ws.name}”`, 'success');
+    } catch (err) {
+      dialogs.toast(`Workspace not saved: ${errorText(err)}`, 'error');
+    }
+  };
+
+  const removeWorkspace = async (ws: Workspace) => {
+    const ok = await dialogs.confirm({ title: 'Delete workspace', message: `Delete the workspace “${ws.name}”? The hosts in it are kept.`, confirmLabel: 'Delete', danger: true });
+    if (!ok) return;
+    try {
+      await deleteWorkspace(ws.id);
+    } catch (err) {
+      dialogs.toast(`Could not delete: ${errorText(err)}`, 'error');
     }
   };
 
@@ -319,7 +484,7 @@ function App() {
     } catch {
       // already gone
     }
-    patchTab(id, { status: 'disconnected' });
+    patchTab(id, { status: 'disconnected', retry: undefined });
   };
 
   const streamTitle = (s: StreamSpec) => (s.kind === 'telnet' ? `telnet ${s.host}` : s.device);
@@ -347,6 +512,7 @@ function App() {
   };
 
   const handleReconnect = (tab: TerminalTab) => {
+    if (tab.retry) patchTab(tab.id, { retry: undefined });
     if (tab.rdp) void connectRdp(tab.id, tab.rdp);
     else if (tab.stream) void connectStream(tab.id, tab.stream);
     else if (tab.profile) connectTab(tab.id, tab.profile);
@@ -471,6 +637,7 @@ function App() {
     openMenu(e, [
       ...paneEntries(id),
       { type: 'separator' },
+      ...(g ? [{ label: 'Save tab as workspace…', icon: <LayoutGrid size={13} />, onSelect: () => void saveAsWorkspace([g.id]) } as MenuEntry] : []),
       { label: many ? 'Close pane' : 'Close tab', icon: <X size={13} />, hint: `${mod}+⇧+W`, onSelect: () => handleCloseTab(id) },
       ...(many ? [{ label: 'Close all panes in tab', icon: <X size={13} />, danger: true, onSelect: () => closeGroup(g!.id) } as MenuEntry] : []),
     ]);
@@ -639,6 +806,19 @@ function App() {
       icon: <SquareTerminal size={14} />,
       run: () => setActiveTabId(t.id),
     })),
+    ...workspaces.map<PaletteItem>((w) => ({
+      id: `ws:${w.id}`,
+      group: 'Workspaces',
+      label: `Open workspace ${w.name}`,
+      hint: `${w.groups.length} tab${w.groups.length === 1 ? '' : 's'}`,
+      icon: <LayoutGrid size={14} />,
+      keywords: 'workspace layout session',
+      run: () => void openWorkspace(w),
+    })),
+    ...(groups.length > 0
+      ? [{ id: 'ws-save', group: 'Actions', label: 'Save open tabs as workspace…', icon: <LayoutGrid size={14} />, keywords: 'workspace layout session save', run: () => void saveAsWorkspace() } as PaletteItem]
+      : []),
+    { id: 'identities', group: 'Actions', label: 'Identities (shared logins)', icon: <Settings size={14} />, keywords: 'credentials user password key login account', run: () => setSettingsOpen('identities') },
     { id: 'new', group: 'Actions', label: 'New SSH connection', icon: <Plus size={14} />, shortcut: [mod, '⇧', 'T'], run: () => openConnectDialog(null) },
     { id: 'rdp', group: 'Actions', label: 'New RDP profile', icon: <Monitor size={14} />, run: () => openRdpDialog() },
     { id: 'folder', group: 'Actions', label: 'New folder', icon: <FolderPlus size={14} />, run: () => library.newFolder('') },
@@ -741,6 +921,9 @@ function App() {
                   onQuickConnect={quickConnect}
                   onNew={() => openConnectDialog(null)}
                   onImport={() => library.setImportOpen(true)}
+                  workspaces={workspaces}
+                  onOpenWorkspace={(w) => void openWorkspace(w)}
+                  onDeleteWorkspace={(w) => void removeWorkspace(w)}
                 />
               </div>
             }
@@ -777,7 +960,7 @@ function App() {
                   />
                   )}
                   {tab.status === 'connecting' && <RdpConnecting tab={tab} />}
-                  {tab.status !== 'connecting' && tab.status !== 'connected' && <StatusOverlay tab={tab} onReconnect={() => handleReconnect(tab)} />}
+                  {tab.status !== 'connecting' && tab.status !== 'connected' && <StatusOverlay tab={tab} onReconnect={() => handleReconnect(tab)} onCancelRetry={() => cancelRetry(tab.id)} />}
                 </div>
               ) : tab.started && tab.profile?.sftpOnly ? (
                 // SFTP-only host: no shell, the file manager is the whole pane.
@@ -785,7 +968,7 @@ function App() {
                   {tab.status === 'connected' && (
                     <SftpPanel fill connectionId={tab.id} visible={visible} onClose={() => {}} />
                   )}
-                  {tab.status !== 'connected' && <StatusOverlay tab={tab} onReconnect={() => handleReconnect(tab)} />}
+                  {tab.status !== 'connected' && <StatusOverlay tab={tab} onReconnect={() => handleReconnect(tab)} onCancelRetry={() => cancelRetry(tab.id)} />}
                 </>
               ) : tab.started ? (
                 <>
@@ -798,7 +981,7 @@ function App() {
                     hostLabel={tab.profile ? `${tab.profile.username}@${tab.profile.host}` : tab.host}
                     onSize={(cols, rows) => setSizes((s) => ({ ...s, [tab.id]: { cols, rows } }))}
                   />
-                  {tab.status !== 'connected' && <StatusOverlay tab={tab} onReconnect={() => handleReconnect(tab)} />}
+                  {tab.status !== 'connected' && <StatusOverlay tab={tab} onReconnect={() => handleReconnect(tab)} onCancelRetry={() => cancelRetry(tab.id)} />}
                 </>
               ) : (
                 <PendingTab tab={tab} onConnect={() => (tab.rdp ? void connectRdp(tab.id, tab.rdp) : openConnectDialog(tab.id))} />
@@ -961,7 +1144,42 @@ function RdpConnecting({ tab }: { tab: TerminalTab }) {
   );
 }
 
-function StatusOverlay({ tab, onReconnect }: { tab: TerminalTab; onReconnect: () => void }) {
+function StatusOverlay({ tab, onReconnect, onCancelRetry }: { tab: TerminalTab; onReconnect: () => void; onCancelRetry: () => void }) {
+  // Tick once a second while a reconnect is scheduled, for the countdown.
+  const [, setNow] = useState(0);
+  useEffect(() => {
+    if (!tab.retry || tab.status !== 'disconnected') return;
+    const t = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(t);
+  }, [tab.retry, tab.status]);
+  if (tab.retry) {
+    const secs = Math.max(0, Math.ceil((tab.retry.at - Date.now()) / 1000));
+    return (
+      <div className="absolute inset-x-0 bottom-5 flex justify-center pointer-events-none">
+        <div className="pointer-events-auto flex items-center gap-3 pl-4 pr-1.5 py-1.5 rounded-xl bg-surface-raised/90 backdrop-blur-xl shadow-pop animate-slide-up" role="status">
+          <span className="flex items-center gap-2 text-gray-300">
+            {tab.status === 'connecting' ? (
+              <>
+                <Loader2 size={14} className="animate-spin text-accent" /> Reconnecting… (attempt {tab.retry.attempt} of {RETRY_MAX})
+              </>
+            ) : (
+              <>
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-400" /> Connection lost. Reconnecting in {secs} s
+              </>
+            )}
+          </span>
+          {tab.status !== 'connecting' && (
+            <button className="btn-primary h-7" onClick={onReconnect}>
+              <RotateCw size={13} /> Now
+            </button>
+          )}
+          <button className="btn-ghost h-7 px-2.5" onClick={onCancelRetry}>
+            Cancel
+          </button>
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="absolute inset-x-0 bottom-5 flex justify-center pointer-events-none">
       <div className="pointer-events-auto flex items-center gap-3 pl-4 pr-1.5 py-1.5 rounded-xl bg-surface-raised/90 backdrop-blur-xl shadow-pop animate-slide-up">

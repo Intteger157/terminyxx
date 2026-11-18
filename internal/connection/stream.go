@@ -196,7 +196,7 @@ func (m *ConnectionManager) ConnectStream(req StreamRequest) error {
 	m.emitter.Emit("connection:state:"+req.ID, "connecting")
 	rw, tn, err := openStream(req)
 	if err != nil {
-		m.emitter.Emit("connection:state:"+req.ID, "disconnected")
+		m.emitter.Emit("connection:state:"+req.ID, "disconnected", CloseFailed)
 		return err
 	}
 	s := &streamConn{id: req.ID, kind: req.Kind, rw: rw, telnet: tn, emitter: m.emitter, done: make(chan struct{})}
@@ -234,7 +234,7 @@ func (m *ConnectionManager) handleStreamClosed(id string, s *streamConn) {
 	m.mu.Unlock()
 	s.close()
 	if current {
-		m.emitter.Emit("connection:state:"+id, "disconnected")
+		m.emitter.Emit("connection:state:"+id, "disconnected", CloseLost)
 	}
 }
 

@@ -7,6 +7,8 @@ import { confirmChangedHostKey, confirmNewHostKey } from '../components/security
 type Dialogs = ReturnType<typeof useDialogs>;
 
 export class ConnectCancelled extends Error {}
+/** A quiet (automatic) connect stopped because it needs the user: password, host key, passphrase. */
+export class ConnectNeedsUser extends Error {}
 
 // Error strings from the Go side (see internal/connection).
 const HOSTKEY_UNKNOWN = 'HOSTKEY_UNKNOWN|';
@@ -27,11 +29,22 @@ export interface ConnectResult {
  * Connects tab `id`, walking the user through password, host key and key
  * passphrase prompts. Throws ConnectCancelled if the user backs out.
  */
-export async function connectWithPrompts(id: string, profile: SSHProfile, dialogs: Dialogs): Promise<ConnectResult> {
+export async function connectWithPrompts(
+  id: string,
+  profile: SSHProfile,
+  dialogs: Dialogs,
+  opts: { interactive?: boolean } = {}
+): Promise<ConnectResult> {
+  const interactive = opts.interactive !== false;
   const result: ConnectResult = { rememberPassword: false };
+  /** In quiet mode every question to the user ends the attempt instead. */
+  const needUser = (why: string) => {
+    if (!interactive) throw new ConnectNeedsUser(why);
+  };
   const target = `${profile.username}@${profile.host}`;
 
   const askPassword = async (retry: boolean) => {
+    needUser(retry ? 'the password was rejected' : 'a password is needed');
     let remember = false;
     const pw = await dialogs.prompt({
       title: retry ? 'Wrong password' : 'Password',
@@ -76,6 +89,7 @@ export async function connectWithPrompts(id: string, profile: SSHProfile, dialog
     } catch (err) {
       const msg = String(err);
 
+      if (msg.includes('unable to authenticate')) needUser('authentication failed');
       if (msg.includes('unable to authenticate') && req.authType !== 'key') {
         req.password = await askPassword(true);
         req.profileId = '';
@@ -85,6 +99,7 @@ export async function connectWithPrompts(id: string, profile: SSHProfile, dialog
       if (msg.includes(LOCKED)) throw new ConnectCancelled();
 
       if (msg.includes(HOSTKEY_UNKNOWN)) {
+        needUser('the host key is not trusted yet');
         const [, host, keyType, fp] = msg.slice(msg.indexOf(HOSTKEY_UNKNOWN)).split('|');
         if (!(await confirmNewHostKey(dialogs, host, keyType, fp))) throw new ConnectCancelled();
         req.acceptHostKey = fp;
@@ -92,6 +107,7 @@ export async function connectWithPrompts(id: string, profile: SSHProfile, dialog
       }
 
       if (msg.includes(HOSTKEY_MISMATCH)) {
+        needUser('the host key has changed');
         // HOSTKEY_MISMATCH|host|type|fingerprint|type fp;type fp
         const [, host, keyType, fp, known = ''] = msg.slice(msg.indexOf(HOSTKEY_MISMATCH)).split('|');
         if (req.replaceHostKey || !(await confirmChangedHostKey(dialogs, host, keyType, fp, known.split(';').filter(Boolean)))) {
@@ -103,6 +119,7 @@ export async function connectWithPrompts(id: string, profile: SSHProfile, dialog
       }
 
       if (msg.includes(LEGACY) && !req.allowLegacyAlgorithms) {
+        needUser('the server needs legacy algorithms');
         const ok = await dialogs.confirm({
           title: 'Server needs legacy algorithms',
           danger: true,
@@ -118,6 +135,7 @@ export async function connectWithPrompts(id: string, profile: SSHProfile, dialog
       }
 
       if (msg.includes(PASSPHRASE)) {
+        needUser('the key passphrase is needed');
         const keyPath = msg.slice(msg.indexOf(PASSPHRASE) + PASSPHRASE.length);
         const pass = await dialogs.prompt({
           title: 'Key passphrase',
@@ -136,7 +154,7 @@ export async function connectWithPrompts(id: string, profile: SSHProfile, dialog
   throw new Error('Could not connect');
 }
 
-function humanizeError(msg: string): string {
+export function humanizeError(msg: string): string {
   if (msg.includes('unable to authenticate')) return 'Wrong username, password or key';
   if (msg.includes('connection refused')) return 'Connection refused: no SSH server is listening on this port';
   if (msg.includes('i/o timeout') || msg.includes('timed out')) return 'Connection timed out';
