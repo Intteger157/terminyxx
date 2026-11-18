@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Circle, Columns2, Copy, EyeOff, LayoutGrid, ScrollText, FolderPlus, FolderTree, Loader2, Lock, Monitor, PanelLeft, Plus, RotateCw, Rows2, Server, Settings, ShieldCheck, SquareArrowOutUpRight, SquareTerminal, Unplug, Upload, X } from 'lucide-react';
+import { Cable, Circle, Columns2, Copy, EyeOff, LayoutGrid, ScrollText, FolderPlus, FolderTree, Loader2, Lock, Monitor, Network, PanelLeft, Plus, RotateCw, Rows2, Server, Settings, ShieldCheck, SquareArrowOutUpRight, SquareTerminal, Unplug, Upload, X } from 'lucide-react';
 import { Sidebar, MAX_WIDTH, MIN_WIDTH } from './components/sidebar/Sidebar';
 import { ImportDialog } from './components/sidebar/ImportDialog';
 import { useHostLibrary } from './components/sidebar/useHostLibrary';
-import { folderPath } from './components/sidebar/tree';
-import { rdpForSave, sshForSave } from './lib/profiles';
+import { folderPath, streamDetail } from './components/sidebar/tree';
+import { rdpForSave, sshForSave, streamForSave } from './lib/profiles';
+import { pruneRecordings } from './lib/recordingCleanup';
 import { TitleBar } from './components/layout/TitleBar';
 import { StatusBar } from './components/layout/StatusBar';
 import { Welcome } from './components/layout/Welcome';
@@ -19,10 +20,11 @@ import type { Side, TabGroup } from './lib/layout';
 import { setBroadcastPanes, toggleBroadcast, useBroadcast } from './lib/broadcast';
 import { SnippetsDialog } from './components/snippets/SnippetsDialog';
 import { StreamDialog } from './components/terminal/StreamDialog';
+import type { StreamDialogState } from './components/terminal/StreamDialog';
 import { ContainersDialog } from './components/terminal/ContainersDialog';
 import { InstallKeyDialog } from './components/terminal/InstallKeyDialog';
 import { setInitialInput } from './lib/initialInput';
-import { StreamConnect } from '../wailsjs/go/main/App';
+import { SaveStreamProfile, StreamConnect } from '../wailsjs/go/main/App';
 import { connection } from '../wailsjs/go/models';
 import { RecordingsDialog } from './components/recordings/RecordingsDialog';
 import type { PaneDrag } from './lib/paneDrag';
@@ -46,7 +48,7 @@ import { setClipboardNotifier } from './lib/clipboard';
 import { getSettings, updateSecurity, useSettings } from './lib/settings';
 import { modKey, usePlatform } from './lib/hosts';
 import type { QuickTarget } from './lib/hosts';
-import type { RDPProfile, SSHProfile, StreamSpec, TerminalTab } from './types';
+import type { RDPProfile, SSHProfile, StreamProfile, StreamSpec, TerminalTab } from './types';
 import { EventsOn, WindowFullscreen, WindowIsFullscreen, WindowUnfullscreen } from '../wailsjs/runtime/runtime';
 import { LaunchRDP, RDPClose, SaveRDPProfile, SaveSSHProfile, SSHDisconnect } from '../wailsjs/go/main/App';
 
@@ -73,6 +75,10 @@ function readSidebarPref(): SidebarPref {
   return { width: 248, rail: false };
 }
 
+/** Tab title of a Telnet or serial session: the saved name, else the address. */
+const streamTitle = (s: StreamSpec) => s.name || (s.kind === 'telnet' ? `telnet ${s.host}` : s.device);
+const streamHost = (s: StreamSpec) => (s.kind === 'telnet' ? s.host : s.device);
+
 function App() {
   const dialogs = useDialogs();
   const platform = usePlatform();
@@ -87,7 +93,7 @@ function App() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [snippetsOpen, setSnippetsOpen] = useState(false);
   const [recordingsOpen, setRecordingsOpen] = useState(false);
-  const [streamDialog, setStreamDialog] = useState<'telnet' | 'serial' | null>(null);
+  const [streamDialog, setStreamDialog] = useState<StreamDialogState | null>(null);
   const [containersFor, setContainersFor] = useState<string | null>(null);
   const [installKeyFor, setInstallKeyFor] = useState<string | null>(null);
   const broadcast = useBroadcast();
@@ -100,9 +106,13 @@ function App() {
     editRDP: (p) => openRdpDialog(p),
     connectRDP: (p, external) => handleConnectRDP(p, external),
     newRDP: (folderId) => openRdpDialog({ folderId }),
+    connectStream: (p) => openStream(p),
+    editStream: (p) => setStreamDialog({ kind: p.kind, profile: p }),
+    newStream: (folderId) => setStreamDialog({ kind: 'telnet', profile: { folderId } }),
   });
   const sshProfiles = library.ssh;
   const rdpProfiles = library.rdp;
+  const streamProfiles = library.streams;
   const loadProfiles = library.reload;
   const [sftpOpenFor, setSftpOpenFor] = useState<Record<string, boolean>>({});
   const [sizes, setSizes] = useState<Record<string, { cols: number; rows: number }>>({});
@@ -188,7 +198,13 @@ function App() {
   }, [activeTabId]);
   const sftpOpen = !!(activeTab && activeTab.status === 'connected' && !activeTab.profile?.sftpOnly && sftpOpenFor[activeTab.id]);
   const connectedProfileIds = useMemo(
-    () => new Set(tabs.filter((t) => t.status === 'connected' && t.profile).map((t) => t.profile!.id)),
+    () =>
+      new Set(
+        tabs
+          .filter((t) => t.status === 'connected')
+          .map((t) => t.profile?.id ?? t.stream?.id)
+          .filter((id): id is string => !!id)
+      ),
     [tabs]
   );
 
@@ -350,12 +366,19 @@ function App() {
   // --- workspaces and session restore ---
 
   const workspaces = useWorkspaces();
-  const savedIds = useMemo(() => new Set([...sshProfiles.map((p) => p.id), ...rdpProfiles.map((p) => p.id)]), [sshProfiles, rdpProfiles]);
+  const savedIds = useMemo(
+    () => new Set([...sshProfiles.map((p) => p.id), ...rdpProfiles.map((p) => p.id), ...streamProfiles.map((p) => p.id)]),
+    [sshProfiles, rdpProfiles, streamProfiles]
+  );
   const restored = useRef(false);
 
   const openWorkspace = async (ws: Workspace) => {
     const exists = (p: { kind: string; profileId: string }) =>
-      p.kind === 'ssh' ? sshProfiles.some((x) => x.id === p.profileId) : getSettings().rdp.builtin && rdpProfiles.some((x) => x.id === p.profileId);
+      p.kind === 'ssh'
+        ? sshProfiles.some((x) => x.id === p.profileId)
+        : p.kind === 'stream'
+          ? streamProfiles.some((x) => x.id === p.profileId)
+          : getSettings().rdp.builtin && rdpProfiles.some((x) => x.id === p.profileId);
     const inst = instantiate(prune(ws, exists));
     if (inst.groups.length === 0) {
       dialogs.toast(`The hosts of “${ws.name}” no longer exist.`, 'error');
@@ -364,9 +387,11 @@ function App() {
     const opened = inst.panes.map(({ id, pane }) => {
       const ssh = pane.kind === 'ssh' ? sshProfiles.find((x) => x.id === pane.profileId) : undefined;
       const rdp = pane.kind === 'rdp' ? rdpProfiles.find((x) => x.id === pane.profileId) : undefined;
-      const p = (ssh ?? rdp)!;
-      const tab: TerminalTab = { id, title: p.name, host: p.host, status: 'idle', started: false, profile: ssh, rdp };
-      return { tab, ssh, rdp };
+      const stream = pane.kind === 'stream' ? streamProfiles.find((x) => x.id === pane.profileId) : undefined;
+      const tab: TerminalTab = stream
+        ? { id, title: streamTitle(stream), host: streamHost(stream), status: 'idle', started: false, stream }
+        : { id, title: (ssh ?? rdp)!.name, host: (ssh ?? rdp)!.host, status: 'idle', started: false, profile: ssh, rdp };
+      return { tab, ssh, rdp, stream };
     });
     setTabs((prev) => [...prev, ...opened.map((o) => o.tab)]);
     setGroups((prev) => [...prev, ...inst.groups]);
@@ -377,6 +402,7 @@ function App() {
       if (!tabsRef.current.some((t) => t.id === o.tab.id)) continue; // closed meanwhile
       if (o.ssh) await connectTab(o.tab.id, o.ssh);
       else if (o.rdp) await connectRdp(o.tab.id, o.rdp);
+      else if (o.stream) await connectStream(o.tab.id, o.stream);
     }
   };
 
@@ -385,6 +411,7 @@ function App() {
     if (!library.loaded || restored.current) return;
     void loadWorkspaces();
     void reloadIdentities();
+    void pruneRecordings().catch(() => {}); // settings.recordings; a failure is retried next start
     if (!getSettings().sessions.restore) {
       restored.current = true;
       return;
@@ -397,7 +424,7 @@ function App() {
   }, [library.loaded]);
 
   const restoreOn = useSettings().sessions.restore;
-  const layoutKey = JSON.stringify([groups, tabs.map((t) => [t.id, t.profile?.id, t.rdp?.id]), activeTabId]);
+  const layoutKey = JSON.stringify([groups, tabs.map((t) => [t.id, t.profile?.id, t.rdp?.id, t.stream?.id]), activeTabId]);
   useEffect(() => {
     if (!restored.current) return;
     rememberSession(restoreOn ? snapshot('Last session', groups, tabs, activeTabId, savedIds) : null);
@@ -498,12 +525,11 @@ function App() {
     patchTab(id, { status: 'disconnected', retry: undefined });
   };
 
-  const streamTitle = (s: StreamSpec) => (s.kind === 'telnet' ? `telnet ${s.host}` : s.device);
-
   const connectStream = async (tabId: string, spec: StreamSpec): Promise<boolean> => {
-    patchTab(tabId, { status: 'connecting', title: streamTitle(spec), host: spec.kind === 'telnet' ? spec.host : spec.device, stream: spec, profile: undefined });
+    patchTab(tabId, { status: 'connecting', title: streamTitle(spec), host: streamHost(spec), stream: spec, profile: undefined });
     try {
-      await StreamConnect(connection.StreamRequest.createFrom({ id: tabId, ...spec }));
+      // spec.id is the saved profile's; the connection is keyed by the tab.
+      await StreamConnect(connection.StreamRequest.createFrom({ ...spec, id: tabId }));
       patchTab(tabId, { status: 'connected', started: true });
       return true;
     } catch (err) {
@@ -511,6 +537,23 @@ function App() {
       dialogs.toast(`Could not connect: ${errorText(err)}`, 'error');
       return false;
     }
+  };
+
+  const openStream = (spec: StreamSpec) => {
+    const id = newTab(streamTitle(spec), streamHost(spec));
+    void connectStream(id, spec);
+  };
+
+  const saveStream = async (p: StreamProfile, connect: boolean) => {
+    try {
+      await SaveStreamProfile(streamForSave(p));
+    } catch (err) {
+      dialogs.toast(`Could not save: ${errorText(err)}`, 'error');
+      return;
+    }
+    setStreamDialog(null);
+    await loadProfiles();
+    if (connect) openStream(p);
   };
 
   const openExec = async (tab: TerminalTab, c: connection.Container) => {
@@ -809,6 +852,15 @@ function App() {
       icon: <Monitor size={14} />,
       run: () => handleConnectRDP(p),
     })),
+    ...streamProfiles.map<PaletteItem>((p) => ({
+      id: `stream:${p.id}`,
+      group: 'Hosts',
+      label: p.name,
+      hint: [...folderPath(library.tree, p.folderId ?? ''), streamDetail(p)].join(' / '),
+      icon: p.kind === 'serial' ? <Cable size={14} /> : <Network size={14} />,
+      keywords: p.kind === 'serial' ? 'serial com console' : 'telnet',
+      run: () => openStream(p),
+    })),
     ...tabs.map<PaletteItem>((t) => ({
       id: `tab:${t.id}`,
       group: 'Tabs',
@@ -846,8 +898,8 @@ function App() {
     { id: 'mask', group: 'Actions', label: masking ? 'Stop masking secrets' : 'Mask secrets in terminal output', icon: <EyeOff size={14} />, keywords: 'presentation streamer mode hide password token redact', shortcut: [mod, '⇧', 'M'], run: toggleMasking },
     { id: 'trusted', group: 'Actions', label: 'Trusted hosts (known_hosts)', icon: <ShieldCheck size={14} />, keywords: 'host key fingerprint known_hosts revoke', run: () => setSettingsOpen('security') },
     { id: 'sync', group: 'Actions', label: 'Encrypted sync file (export / import hosts)', icon: <Settings size={14} />, keywords: 'backup restore transfer migrate cloud dropbox', run: () => setSettingsOpen('sync') },
-    { id: 'telnet', group: 'Actions', label: 'New Telnet connection', icon: <Plus size={14} />, keywords: 'router switch network device', run: () => setStreamDialog('telnet') },
-    { id: 'serial', group: 'Actions', label: 'New serial port connection', icon: <Plus size={14} />, keywords: 'com uart console usb tty baud', run: () => setStreamDialog('serial') },
+    { id: 'telnet', group: 'Actions', label: 'New Telnet connection', icon: <Plus size={14} />, keywords: 'router switch network device', run: () => setStreamDialog({ kind: 'telnet' }) },
+    { id: 'serial', group: 'Actions', label: 'New serial port connection', icon: <Plus size={14} />, keywords: 'com uart console usb tty baud', run: () => setStreamDialog({ kind: 'serial' }) },
     ...(activeTab?.status === 'connected' && activeTab.profile && !activeTab.profile.sftpOnly
       ? [{ id: 'containers', group: 'Actions', label: 'Containers (Docker, Podman, Kubernetes)', icon: <SquareTerminal size={14} />, keywords: 'docker exec shell pod kubectl podman', run: () => setContainersFor(activeTab.id) } as PaletteItem]
       : []),
@@ -913,6 +965,7 @@ function App() {
           folders={library.folders}
           sshProfiles={sshProfiles}
           rdpProfiles={rdpProfiles}
+          streamProfiles={streamProfiles}
           connectedIds={connectedProfileIds}
           renamingId={library.renamingId}
           onRenameDone={() => library.setRenamingId(null)}
@@ -1068,13 +1121,15 @@ function App() {
 
       {streamDialog && (
         <StreamDialog
+          key={streamDialog.profile?.id ?? streamDialog.kind}
           initial={streamDialog}
+          folders={library.folderChoices}
           onClose={() => setStreamDialog(null)}
           onConnect={(spec) => {
             setStreamDialog(null);
-            const id = newTab(streamTitle(spec), spec.kind === 'telnet' ? spec.host : spec.device);
-            void connectStream(id, spec);
+            openStream(spec);
           }}
+          onSave={(p, connect) => void saveStream(p, connect)}
         />
       )}
 

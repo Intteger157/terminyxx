@@ -237,6 +237,22 @@ ALTER TABLE ssh_profiles ADD COLUMN identity_id TEXT NOT NULL DEFAULT '';`,
 	// v10: per-host terminal options (color, startup commands, encoding, theme).
 	`
 ALTER TABLE ssh_profiles ADD COLUMN options TEXT NOT NULL DEFAULT '';`,
+	// v11: saved Telnet and serial connections.
+	`
+CREATE TABLE stream_profiles (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    host TEXT NOT NULL DEFAULT '',
+    port INTEGER NOT NULL DEFAULT 23,
+    device TEXT NOT NULL DEFAULT '',
+    baud INTEGER NOT NULL DEFAULT 9600,
+    data_bits INTEGER NOT NULL DEFAULT 8,
+    parity TEXT NOT NULL DEFAULT 'none',
+    stop_bits TEXT NOT NULL DEFAULT '1',
+    folder_id TEXT NOT NULL DEFAULT '',
+    sort_order INTEGER NOT NULL DEFAULT 0
+);`,
 }
 
 func (s *Store) migrate() error {

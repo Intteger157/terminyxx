@@ -54,6 +54,12 @@ export interface AppSettings {
     /** Reopen the tabs and split layout of the last run at startup. */
     restore: boolean;
   };
+  recordings: {
+    /** Delete finished recordings older than this many days; 0 = keep. */
+    keepDays: RecordingKeepDays;
+    /** Delete the oldest recordings while the folder is larger; 0 = no limit. */
+    maxSizeMB: RecordingMaxMB;
+  };
   /**
    * Mirrors `security.SecurityConfig` in internal/security/config.go: the Go
    * side decodes this part of the JSON on every save and enforces it.
@@ -96,6 +102,11 @@ export interface AppSettings {
     osc52: Osc52Policy;
   };
 }
+
+export const RECORDING_KEEP_OPTIONS = [0, 7, 30, 90, 365] as const;
+export type RecordingKeepDays = (typeof RECORDING_KEEP_OPTIONS)[number];
+export const RECORDING_SIZE_OPTIONS = [0, 500, 1024, 5120, 20480] as const;
+export type RecordingMaxMB = (typeof RECORDING_SIZE_OPTIONS)[number];
 
 export type AgentSource = 'auto' | 'openssh' | 'pageant' | 'custom';
 const AGENT_SOURCES: AgentSource[] = ['auto', 'openssh', 'pageant', 'custom'];
@@ -205,6 +216,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   updates: { autoCheck: true },
   rdp: { builtin: true },
   sessions: { autoReconnect: true, restore: false },
+  recordings: { keepDays: 0, maxSizeMB: 0 },
   security: {
     hideFromCapture: true,
     lock: { biometrics: false, autoLockMinutes: 15, lockOnMinimize: false },
@@ -271,6 +283,10 @@ function normalize(raw: unknown): AppSettings {
     sessions: {
       autoReconnect: (r.sessions?.autoReconnect ?? true) !== false,
       restore: !!r.sessions?.restore,
+    },
+    recordings: {
+      keepDays: RECORDING_KEEP_OPTIONS.find((v) => v === r.recordings?.keepDays) ?? 0,
+      maxSizeMB: RECORDING_SIZE_OPTIONS.find((v) => v === r.recordings?.maxSizeMB) ?? 0,
     },
     security: {
       hideFromCapture: sec.hideFromCapture !== false,

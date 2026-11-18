@@ -38,6 +38,10 @@ export function DeleteSnippet(arg1) {
   return window['go']['main']['App']['DeleteSnippet'](arg1);
 }
 
+export function DeleteStreamProfile(arg1) {
+  return window['go']['main']['App']['DeleteStreamProfile'](arg1);
+}
+
 export function ExportSync(arg1, arg2) {
   return window['go']['main']['App']['ExportSync'](arg1, arg2);
 }
@@ -142,6 +146,14 @@ export function ListSnippets() {
   return window['go']['main']['App']['ListSnippets']();
 }
 
+export function ListStreamProfiles() {
+  return window['go']['main']['App']['ListStreamProfiles']();
+}
+
+export function ListTrustedCerts() {
+  return window['go']['main']['App']['ListTrustedCerts']();
+}
+
 export function ListTrustedHosts() {
   return window['go']['main']['App']['ListTrustedHosts']();
 }
@@ -188,6 +200,10 @@ export function OpenURL(arg1) {
 
 export function PickImportPaths(arg1) {
   return window['go']['main']['App']['PickImportPaths'](arg1);
+}
+
+export function PruneRecordings(arg1, arg2) {
+  return window['go']['main']['App']['PruneRecordings'](arg1, arg2);
 }
 
 export function RDPClipboardChanged() {
@@ -252,6 +268,10 @@ export function ReadLocalFile(arg1) {
 
 export function ReadRecording(arg1) {
   return window['go']['main']['App']['ReadRecording'](arg1);
+}
+
+export function RemoveTrustedCert(arg1) {
+  return window['go']['main']['App']['RemoveTrustedCert'](arg1);
 }
 
 export function RemoveTrustedHost(arg1) {
@@ -348,6 +368,10 @@ export function SaveSettings(arg1) {
 
 export function SaveSnippet(arg1) {
   return window['go']['main']['App']['SaveSnippet'](arg1);
+}
+
+export function SaveStreamProfile(arg1) {
+  return window['go']['main']['App']['SaveStreamProfile'](arg1);
 }
 
 export function SaveUIState(arg1, arg2) {

@@ -11,6 +11,11 @@ const (
 	KindFolder = "folder"
 	KindSSH    = "ssh"
 	KindRDP    = "rdp"
+	KindStream = "stream" // a saved Telnet or serial connection
+
+	// StreamProfile.Kind values.
+	KindTelnet = "telnet"
+	KindSerial = "serial"
 )
 
 var ErrFolderCycle = errors.New("cannot move a folder into itself")
@@ -75,6 +80,7 @@ func (s *Store) DeleteFolder(id string) error {
 		`UPDATE folders SET parent_id=? WHERE parent_id=?`,
 		`UPDATE ssh_profiles SET folder_id=? WHERE folder_id=?`,
 		`UPDATE rdp_profiles SET folder_id=? WHERE folder_id=?`,
+		`UPDATE stream_profiles SET folder_id=? WHERE folder_id=?`,
 	} {
 		if _, err := tx.Exec(q, parent, id); err != nil {
 			return err
@@ -97,14 +103,15 @@ func (s *Store) nextHostOrder(folderID string) int {
 SELECT COALESCE(MAX(o)+1, 0) FROM (
   SELECT sort_order AS o FROM ssh_profiles WHERE folder_id=?
   UNION ALL SELECT sort_order FROM rdp_profiles WHERE folder_id=?
-)`, folderID, folderID).Scan(&next)
+  UNION ALL SELECT sort_order FROM stream_profiles WHERE folder_id=?
+)`, folderID, folderID, folderID).Scan(&next)
 	return next
 }
 
 // MoveItem moves a folder or host into parentID ("" = root) at position
 // index among its siblings of the same group. Folders and hosts are ordered
-// separately (folders are always listed before hosts); SSH and RDP hosts
-// share one order. A negative index appends.
+// separately (folders are always listed before hosts); SSH, RDP, Telnet
+// and serial hosts share one order. A negative index appends.
 func (s *Store) MoveItem(kind, id, parentID string, index int) error {
 	if parentID != "" && !s.folderExists(parentID) {
 		return fmt.Errorf("folder %s not found", parentID)
@@ -127,8 +134,9 @@ func (s *Store) MoveItem(kind, id, parentID string, index int) error {
 SELECT k, id FROM (
   SELECT 'ssh' AS k, id, name, sort_order FROM ssh_profiles WHERE folder_id=?
   UNION ALL SELECT 'rdp', id, name, sort_order FROM rdp_profiles WHERE folder_id=?
+  UNION ALL SELECT 'stream', id, name, sort_order FROM stream_profiles WHERE folder_id=?
 ) WHERE NOT (k=? AND id=?) ORDER BY sort_order, name`
-		args = []any{parentID, parentID, kind, id}
+		args = []any{parentID, parentID, parentID, kind, id}
 	}
 	rows, err := s.db.Query(query, args...)
 	if err != nil {
@@ -165,6 +173,8 @@ SELECT k, id FROM (
 			q = `UPDATE ssh_profiles SET sort_order=?, folder_id=? WHERE id=?`
 		case KindRDP:
 			q = `UPDATE rdp_profiles SET sort_order=?, folder_id=? WHERE id=?`
+		case KindStream:
+			q = `UPDATE stream_profiles SET sort_order=?, folder_id=? WHERE id=?`
 		default:
 			return fmt.Errorf("unknown item kind %q", x.kind)
 		}

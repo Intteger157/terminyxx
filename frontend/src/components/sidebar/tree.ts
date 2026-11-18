@@ -1,8 +1,9 @@
-import type { Folder, RDPProfile, SSHProfile } from '../../types';
+import type { Folder, RDPProfile, SSHProfile, StreamProfile } from '../../types';
 
 export type HostItem =
   | { kind: 'ssh'; id: string; name: string; detail: string; folderId: string; sortOrder: number; profile: SSHProfile }
-  | { kind: 'rdp'; id: string; name: string; detail: string; folderId: string; sortOrder: number; profile: RDPProfile };
+  | { kind: 'rdp'; id: string; name: string; detail: string; folderId: string; sortOrder: number; profile: RDPProfile }
+  | { kind: 'stream'; id: string; name: string; detail: string; folderId: string; sortOrder: number; profile: StreamProfile };
 
 export interface FolderNode {
   folder: Folder;
@@ -18,11 +19,11 @@ export interface Tree {
   byId: Map<string, FolderNode>;
 }
 
-export type DragItem = { kind: 'folder' | 'ssh' | 'rdp'; id: string };
+export type DragItem = { kind: 'folder' | 'ssh' | 'rdp' | 'stream'; id: string };
 
 export const FOLDER_COLORS = ['', '#f87171', '#fb923c', '#facc15', '#4ade80', '#2dd4bf', '#60a5fa', '#a78bfa', '#f472b6'];
 
-export function hostItems(ssh: SSHProfile[], rdp: RDPProfile[]): HostItem[] {
+export function hostItems(ssh: SSHProfile[], rdp: RDPProfile[], streams: StreamProfile[] = []): HostItem[] {
   return [
     ...ssh.map<HostItem>((p) => ({
       kind: 'ssh',
@@ -42,7 +43,22 @@ export function hostItems(ssh: SSHProfile[], rdp: RDPProfile[]): HostItem[] {
       sortOrder: p.sortOrder ?? 0,
       profile: p,
     })),
+    ...streams.map<HostItem>((p) => ({
+      kind: 'stream',
+      id: p.id,
+      name: p.name,
+      detail: streamDetail(p),
+      folderId: p.folderId ?? '',
+      sortOrder: p.sortOrder ?? 0,
+      profile: p,
+    })),
   ];
+}
+
+/** "telnet sw1:2323" or "COM3 · 115200 8N1". */
+export function streamDetail(p: StreamProfile): string {
+  if (p.kind === 'telnet') return `Telnet · ${p.host}${p.port !== 23 ? `:${p.port}` : ''}`;
+  return `${p.device} · ${p.baud} ${p.dataBits}${(p.parity || 'n')[0].toUpperCase()}${p.stopBits}`;
 }
 
 const byOrder = <T extends { sortOrder: number; name: string }>(a: T, b: T) =>

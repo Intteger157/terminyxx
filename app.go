@@ -342,6 +342,16 @@ func (a *App) SearchRecordings(query string) ([]recording.Hit, error) {
 	return recording.Search(a.recordingsDir, query, 200)
 }
 
+// PruneRecordings deletes finished recordings older than keepDays and then
+// the oldest ones until the folder is at most maxSizeMB. Zero turns a limit
+// off. Returns how many were deleted.
+func (a *App) PruneRecordings(keepDays, maxSizeMB int) (int, error) {
+	if err := a.guard(); err != nil {
+		return 0, err
+	}
+	return recording.Prune(a.recordingsDir, time.Duration(keepDays)*24*time.Hour, int64(maxSizeMB)<<20)
+}
+
 // OpenRecordingsFolder shows the recordings in the file manager.
 func (a *App) OpenRecordingsFolder() error {
 	if err := a.guard(); err != nil {
@@ -671,6 +681,38 @@ func (a *App) DeleteIdentity(id string) error {
 		return errors.New("storage unavailable")
 	}
 	return a.data.DeleteIdentity(id)
+}
+
+// Saved Telnet and serial connections.
+
+func (a *App) ListStreamProfiles() ([]store.StreamProfile, error) {
+	if err := a.guard(); err != nil {
+		return nil, err
+	}
+	if a.data == nil {
+		return []store.StreamProfile{}, nil
+	}
+	return a.data.ListStreamProfiles()
+}
+
+func (a *App) SaveStreamProfile(p store.StreamProfile) error {
+	if err := a.guard(); err != nil {
+		return err
+	}
+	if a.data == nil {
+		return errors.New("storage unavailable")
+	}
+	return a.data.SaveStreamProfile(p)
+}
+
+func (a *App) DeleteStreamProfile(id string) error {
+	if err := a.guard(); err != nil {
+		return err
+	}
+	if a.data == nil {
+		return errors.New("storage unavailable")
+	}
+	return a.data.DeleteStreamProfile(id)
 }
 
 func (a *App) ListRDPProfiles() ([]rdp.RDPProfile, error) {

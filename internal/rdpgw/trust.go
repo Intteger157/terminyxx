@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -40,8 +42,19 @@ func Fingerprint(cert *x509.Certificate) string {
 	return b.String()
 }
 
-func (s *TrustStore) read() (map[string]string, error) {
-	out := map[string]string{}
+// TrustedCert is one accepted certificate, for the Trusted hosts manager.
+type TrustedCert struct {
+	Dest        string `json:"dest"` // host:port, lower case
+	Fingerprint string `json:"fingerprint"`
+	Subject     string `json:"subject"`  // empty for entries saved by older versions
+	NotAfter    int64  `json:"notAfter"` // unix seconds, 0 = unknown
+	Added       int64  `json:"added"`    // unix seconds, 0 = unknown
+}
+
+// File lines are "dest fp" followed, since the manager exists, by
+// "notAfter added subject…" (the subject may contain spaces).
+func (s *TrustStore) read() (map[string]TrustedCert, error) {
+	out := map[string]TrustedCert{}
 	f, err := os.Open(s.path)
 	if os.IsNotExist(err) {
 		return out, nil
@@ -53,11 +66,41 @@ func (s *TrustStore) read() (map[string]string, error) {
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
 		fields := strings.Fields(sc.Text())
-		if len(fields) == 2 && !strings.HasPrefix(fields[0], "#") {
-			out[fields[0]] = fields[1]
+		if len(fields) < 2 || strings.HasPrefix(fields[0], "#") {
+			continue
 		}
+		c := TrustedCert{Dest: fields[0], Fingerprint: fields[1]}
+		if len(fields) >= 4 {
+			c.NotAfter, _ = strconv.ParseInt(fields[2], 10, 64)
+			c.Added, _ = strconv.ParseInt(fields[3], 10, 64)
+			c.Subject = strings.Join(fields[4:], " ")
+		}
+		out[c.Dest] = c
 	}
 	return out, sc.Err()
+}
+
+func (s *TrustStore) write(m map[string]TrustedCert) error {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	for _, k := range keys {
+		c := m[k]
+		subject := strings.Join(strings.Fields(c.Subject), " ")
+		line := fmt.Sprintf("%s %s %d %d %s", k, c.Fingerprint, c.NotAfter, c.Added, subject)
+		b.WriteString(strings.TrimRight(line, " ") + "\n")
+	}
+	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
+		return err
+	}
+	tmp := s.path + ".tmp"
+	if err := os.WriteFile(tmp, []byte(b.String()), 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, s.path)
 }
 
 // Lookup returns the trusted fingerprint for dest ("host:port").
@@ -68,31 +111,58 @@ func (s *TrustStore) Lookup(dest string) (string, bool) {
 	if err != nil {
 		return "", false
 	}
-	fp, ok := m[strings.ToLower(dest)]
-	return fp, ok
+	c, ok := m[strings.ToLower(dest)]
+	return c.Fingerprint, ok
 }
 
-// Trust stores fp for dest, replacing an earlier one.
-func (s *TrustStore) Trust(dest, fp string) error {
+// Trust stores fp for dest, replacing an earlier one. cert, when known, adds
+// the subject and expiry shown in the manager.
+func (s *TrustStore) Trust(dest, fp string, cert *x509.Certificate) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	m, err := s.read()
 	if err != nil {
 		return err
 	}
-	m[strings.ToLower(dest)] = fp
-	var b strings.Builder
-	for k, v := range m {
-		fmt.Fprintf(&b, "%s %s\n", k, v)
+	c := TrustedCert{Dest: strings.ToLower(dest), Fingerprint: fp, Added: time.Now().Unix()}
+	if cert != nil {
+		c.Subject = cert.Subject.String()
+		c.NotAfter = cert.NotAfter.Unix()
 	}
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
+	m[c.Dest] = c
+	return s.write(m)
+}
+
+// List returns the accepted certificates sorted by destination.
+func (s *TrustStore) List() ([]TrustedCert, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	m, err := s.read()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]TrustedCert, 0, len(m))
+	for _, c := range m {
+		out = append(out, c)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Dest < out[j].Dest })
+	return out, nil
+}
+
+// Remove forgets the certificate of dest; the next connection asks again.
+func (s *TrustStore) Remove(dest string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	m, err := s.read()
+	if err != nil {
 		return err
 	}
-	tmp := s.path + ".tmp"
-	if err := os.WriteFile(tmp, []byte(b.String()), 0o600); err != nil {
-		return err
+	dest = strings.ToLower(dest)
+	if _, ok := m[dest]; !ok {
+		return fmt.Errorf("no trusted certificate for %s", dest)
 	}
-	return os.Rename(tmp, s.path)
+	delete(m, dest)
+	return s.write(m)
 }
 
 // UntrustedError describes a certificate the user has to decide about. Its
@@ -106,6 +176,8 @@ type UntrustedError struct {
 	NotAfter    time.Time
 	Changed     bool
 	Reason      string
+	// Cert is the leaf, for Trust.
+	Cert *x509.Certificate
 }
 
 func (e *UntrustedError) Error() string {
@@ -154,5 +226,6 @@ func (s *TrustStore) Check(dest, host string, chain []*x509.Certificate) error {
 		NotAfter:    leaf.NotAfter,
 		Changed:     ok,
 		Reason:      reason,
+		Cert:        leaf,
 	}
 }

@@ -720,6 +720,31 @@ export namespace rdpdrive {
 
 }
 
+export namespace rdpgw {
+	
+	export class TrustedCert {
+	    dest: string;
+	    fingerprint: string;
+	    subject: string;
+	    notAfter: number;
+	    added: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new TrustedCert(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.dest = source["dest"];
+	        this.fingerprint = source["fingerprint"];
+	        this.subject = source["subject"];
+	        this.notAfter = source["notAfter"];
+	        this.added = source["added"];
+	    }
+	}
+
+}
+
 export namespace recording {
 	
 	export class Event {
@@ -1104,6 +1129,40 @@ export namespace store {
 	        this.description = source["description"];
 	        this.group = source["group"];
 	        this.execute = source["execute"];
+	        this.sortOrder = source["sortOrder"];
+	    }
+	}
+	export class StreamProfile {
+	    id: string;
+	    name: string;
+	    kind: string;
+	    host: string;
+	    port: number;
+	    device: string;
+	    baud: number;
+	    dataBits: number;
+	    parity: string;
+	    stopBits: string;
+	    folderId: string;
+	    sortOrder: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new StreamProfile(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.kind = source["kind"];
+	        this.host = source["host"];
+	        this.port = source["port"];
+	        this.device = source["device"];
+	        this.baud = source["baud"];
+	        this.dataBits = source["dataBits"];
+	        this.parity = source["parity"];
+	        this.stopBits = source["stopBits"];
+	        this.folderId = source["folderId"];
 	        this.sortOrder = source["sortOrder"];
 	    }
 	}

@@ -10,6 +10,7 @@ import {importers} from '../models';
 import {printing} from '../models';
 import {rdp} from '../models';
 import {recording} from '../models';
+import {rdpgw} from '../models';
 import {pasteboard} from '../models';
 import {main} from '../models';
 
@@ -30,6 +31,8 @@ export function DeleteRecording(arg1:string):Promise<void>;
 export function DeleteSSHProfile(arg1:string):Promise<void>;
 
 export function DeleteSnippet(arg1:string):Promise<void>;
+
+export function DeleteStreamProfile(arg1:string):Promise<void>;
 
 export function ExportSync(arg1:string,arg2:boolean):Promise<string>;
 
@@ -83,6 +86,10 @@ export function ListSSHProfiles():Promise<Array<store.SSHProfile>>;
 
 export function ListSnippets():Promise<Array<store.Snippet>>;
 
+export function ListStreamProfiles():Promise<Array<store.StreamProfile>>;
+
+export function ListTrustedCerts():Promise<Array<rdpgw.TrustedCert>>;
+
 export function ListTrustedHosts():Promise<Array<connection.TrustedHost>>;
 
 export function ListTunnels(arg1:string):Promise<Array<connection.TunnelInfo>>;
@@ -106,6 +113,8 @@ export function OpenRecordingsFolder():Promise<void>;
 export function OpenURL(arg1:string):Promise<void>;
 
 export function PickImportPaths(arg1:string):Promise<Array<string>>;
+
+export function PruneRecordings(arg1:number,arg2:number):Promise<number>;
 
 export function RDPClipboardChanged():Promise<pasteboard.Content>;
 
@@ -138,6 +147,8 @@ export function ReadImport(arg1:string,arg2:Array<string>):Promise<importers.Res
 export function ReadLocalFile(arg1:string):Promise<string>;
 
 export function ReadRecording(arg1:string):Promise<recording.Recording>;
+
+export function RemoveTrustedCert(arg1:string):Promise<void>;
 
 export function RemoveTrustedHost(arg1:string):Promise<void>;
 
@@ -186,6 +197,8 @@ export function SaveSSHProfile(arg1:store.SSHProfile):Promise<void>;
 export function SaveSettings(arg1:string):Promise<void>;
 
 export function SaveSnippet(arg1:store.Snippet):Promise<void>;
+
+export function SaveStreamProfile(arg1:store.StreamProfile):Promise<void>;
 
 export function SaveUIState(arg1:string,arg2:string):Promise<void>;
 

@@ -7,6 +7,7 @@ import (
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"terminyxx/internal/connection"
+	"terminyxx/internal/rdpgw"
 	"terminyxx/internal/security"
 	"terminyxx/internal/store"
 )
@@ -291,4 +292,23 @@ func (a *App) RemoveTrustedHost(id string) error {
 		return err
 	}
 	return a.connMgr.RemoveTrustedHost(id)
+}
+
+// RDP certificates the user accepted (rdp_known_certs), for the Trusted
+// hosts manager.
+
+func (a *App) ListTrustedCerts() ([]rdpgw.TrustedCert, error) {
+	if err := a.guard(); err != nil {
+		return nil, err
+	}
+	return a.rdpgw.Trust().List()
+}
+
+// RemoveTrustedCert forgets the certificate of dest ("host:port"); the next
+// connection asks to verify it again.
+func (a *App) RemoveTrustedCert(dest string) error {
+	if err := a.guard(); err != nil {
+		return err
+	}
+	return a.rdpgw.Trust().Remove(dest)
 }

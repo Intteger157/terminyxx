@@ -20,6 +20,8 @@ type Bundle struct {
 	// Identities appeared after version 1 shipped; older files have none and
 	// older apps ignore the field (hosts then keep their own copied login).
 	Identities []Identity `json:"identities,omitempty"`
+	// Streams (Telnet and serial connections) came later too.
+	Streams []StreamProfile `json:"streams,omitempty"`
 }
 
 // ImportResult counts what an import added or replaced.
@@ -88,6 +90,9 @@ func (s *Store) ExportBundle(includePasswords bool) (Bundle, error) {
 		b.RDP = append(b.RDP, p)
 	}
 	if b.Snippets, err = s.ListSnippets(); err != nil {
+		return b, err
+	}
+	if b.Streams, err = s.ListStreamProfiles(); err != nil {
 		return b, err
 	}
 	return b, nil
@@ -164,6 +169,15 @@ func (s *Store) ImportBundle(b Bundle) (ImportResult, error) {
 			res.Replaced = append(res.Replaced, cur.Name)
 		}
 		if err := s.SaveRDPProfile(p); err != nil {
+			return res, err
+		}
+		res.Hosts++
+	}
+	for _, p := range b.Streams {
+		if cur, err := s.GetStreamProfile(p.ID); err == nil && (cur.Kind != p.Kind || cur.Host != p.Host || cur.Port != p.Port || cur.Device != p.Device) {
+			res.Replaced = append(res.Replaced, cur.Name)
+		}
+		if err := s.SaveStreamProfile(p); err != nil {
 			return res, err
 		}
 		res.Hosts++

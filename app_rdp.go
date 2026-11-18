@@ -76,7 +76,7 @@ func (a *App) RDPOpen(tabID, profileID, password, acceptFingerprint string) (RDP
 		if !errors.As(err, &ue) || acceptFingerprint == "" || acceptFingerprint != ue.Fingerprint {
 			return RDPSession{}, err
 		}
-		if err := a.rdpgw.Trust().Trust(dest, ue.Fingerprint); err != nil {
+		if err := a.rdpgw.Trust().Trust(dest, ue.Fingerprint, ue.Cert); err != nil {
 			return RDPSession{}, fmt.Errorf("save certificate: %w", err)
 		}
 	}

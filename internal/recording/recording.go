@@ -28,7 +28,12 @@ type Recorder struct {
 	start  time.Time
 	closed bool
 	bytes  int64
+	path   string
 }
+
+// active holds the paths of recordings still being written, which Prune
+// leaves alone.
+var active sync.Map
 
 // maxBytes stops a runaway session (e.g. `cat /dev/urandom`) from filling the disk.
 const maxBytes = 256 << 20
@@ -64,7 +69,8 @@ func Start(dir, title string, cols, rows int) (*Recorder, string, error) {
 	if rows <= 0 {
 		rows = 30
 	}
-	r := &Recorder{f: f, w: bufio.NewWriter(f), start: now}
+	r := &Recorder{f: f, w: bufio.NewWriter(f), start: now, path: f.Name()}
+	active.Store(r.path, true)
 	h, _ := json.Marshal(header{Version: 2, Width: cols, Height: rows, Timestamp: now.Unix(), Title: title, Env: map[string]string{"TERM": "xterm-256color"}})
 	r.w.Write(h)
 	r.w.WriteByte('\n')
@@ -103,6 +109,7 @@ func (r *Recorder) closeLocked() {
 	r.closed = true
 	_ = r.w.Flush()
 	_ = r.f.Close()
+	active.Delete(r.path)
 }
 
 // Close finishes the file. Further events are ignored.
@@ -286,6 +293,65 @@ func Delete(dir, name string) error {
 		return nil
 	}
 	return err
+}
+
+// Prune deletes finished recordings older than maxAge, then the oldest ones
+// until the folder holds at most maxTotal bytes. Zero turns a limit off.
+// Recordings still being written are never deleted (but count toward the
+// total). It returns how many files it removed.
+func Prune(dir string, maxAge time.Duration, maxTotal int64) (int, error) {
+	if maxAge <= 0 && maxTotal <= 0 {
+		return 0, nil
+	}
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	type file struct {
+		path string
+		mod  time.Time
+		size int64
+	}
+	var files []file
+	var total int64
+	for _, e := range entries {
+		if e.IsDir() || !validName(e.Name()) {
+			continue
+		}
+		st, err := e.Info()
+		if err != nil {
+			continue
+		}
+		path := filepath.Join(dir, e.Name())
+		total += st.Size()
+		if _, busy := active.Load(path); busy {
+			continue
+		}
+		files = append(files, file{path, st.ModTime(), st.Size()})
+	}
+	sort.Slice(files, func(i, j int) bool { return files[i].mod.Before(files[j].mod) })
+	removed := 0
+	var firstErr error
+	cutoff := time.Now().Add(-maxAge)
+	for _, f := range files {
+		old := maxAge > 0 && f.mod.Before(cutoff)
+		over := maxTotal > 0 && total > maxTotal
+		if !old && !over {
+			break // sorted oldest first: nothing later is older
+		}
+		if err := os.Remove(f.path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		total -= f.size
+		removed++
+	}
+	return removed, firstErr
 }
 
 // ansi matches escape sequences so search sees only the visible text.

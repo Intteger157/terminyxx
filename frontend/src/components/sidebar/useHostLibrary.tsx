@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  Cable,
   Copy,
   FolderPlus,
   Monitor,
@@ -12,14 +13,14 @@ import {
   Zap,
 } from 'lucide-react';
 import type { ImportItem } from './ImportDialog';
-import type { Folder, RDPProfile, SSHProfile } from '../../types';
+import type { Folder, RDPProfile, SSHProfile, StreamProfile } from '../../types';
 import { errorText, useDialogs } from '../ui/Dialogs';
 import { useContextMenu } from '../ui/ContextMenu';
 import type { MenuEntry } from '../ui/ContextMenu';
 import type { TreeActions } from './HostTree';
 import type { DragItem, FolderNode, HostItem } from './tree';
 import { FOLDER_COLORS, buildTree, folderOptions, hostItems, hostsUnder } from './tree';
-import { rdpForSave, sshForSave } from '../../lib/profiles';
+import { rdpForSave, sshForSave, streamForSave } from '../../lib/profiles';
 import { planJumps } from '../../lib/importJumps';
 import { copyText } from '../../lib/clipboard';
 import { useAppLock } from '../../lib/appLock';
@@ -27,13 +28,16 @@ import {
   DeleteFolder,
   DeleteRDPProfile,
   DeleteSSHProfile,
+  DeleteStreamProfile,
   ListFolders,
   ListRDPProfiles,
   ListSSHProfiles,
+  ListStreamProfiles,
   MoveItem,
   SaveFolder,
   SaveRDPProfile,
   SaveSSHProfile,
+  SaveStreamProfile,
 } from '../../../wailsjs/go/main/App';
 
 interface Options {
@@ -44,6 +48,9 @@ interface Options {
   /** external: open in the system's RDP client instead of a tab. */
   connectRDP: (p: RDPProfile, external?: boolean) => void;
   newRDP: (folderId: string) => void;
+  connectStream: (p: StreamProfile) => void;
+  editStream: (p: StreamProfile) => void;
+  newStream: (folderId: string) => void;
 }
 
 /** Saved hosts, folders, and every sidebar action on them. */
@@ -53,6 +60,7 @@ export function useHostLibrary(opts: Options) {
   const [folders, setFolders] = useState<Folder[]>([]);
   const [ssh, setSSH] = useState<SSHProfile[]>([]);
   const [rdp, setRDP] = useState<RDPProfile[]>([]);
+  const [streams, setStreams] = useState<StreamProfile[]>([]);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   /** True once the hosts were read at least once (after unlocking). */
@@ -60,10 +68,11 @@ export function useHostLibrary(opts: Options) {
 
   const reload = useCallback(async () => {
     try {
-      const [f, s, r] = await Promise.all([ListFolders(), ListSSHProfiles(), ListRDPProfiles()]);
+      const [f, s, r, st] = await Promise.all([ListFolders(), ListSSHProfiles(), ListRDPProfiles(), ListStreamProfiles()]);
       setFolders(f ?? []);
       setSSH(s ?? []);
       setRDP(r ?? []);
+      setStreams((st ?? []) as StreamProfile[]);
       setLoaded(true);
     } catch (err) {
       dialogs.toast(`Failed to load hosts: ${errorText(err)}`, 'error');
@@ -77,7 +86,7 @@ export function useHostLibrary(opts: Options) {
     if (ready && !locked) reload();
   }, [reload, locked, ready]);
 
-  const tree = useMemo(() => buildTree(folders, hostItems(ssh, rdp)), [folders, ssh, rdp]);
+  const tree = useMemo(() => buildTree(folders, hostItems(ssh, rdp, streams)), [folders, ssh, rdp, streams]);
   const folderChoices = useMemo(() => folderOptions(tree), [tree]);
 
   const run = async (what: string, fn: () => Promise<unknown>) => {
@@ -116,7 +125,9 @@ export function useHostLibrary(opts: Options) {
       danger: true,
     });
     if (!ok) return;
-    await run('Could not delete host', () => (h.kind === 'ssh' ? DeleteSSHProfile(h.id) : DeleteRDPProfile(h.id)));
+    await run('Could not delete host', () =>
+      h.kind === 'ssh' ? DeleteSSHProfile(h.id) : h.kind === 'rdp' ? DeleteRDPProfile(h.id) : DeleteStreamProfile(h.id)
+    );
   };
 
   const connectAll = (node: FolderNode) => {
@@ -126,12 +137,25 @@ export function useHostLibrary(opts: Options) {
 
   const openHost = (h: HostItem) => {
     if (h.kind === 'ssh') opts.connectSSH(h.profile);
-    else opts.connectRDP(h.profile);
+    else if (h.kind === 'rdp') opts.connectRDP(h.profile);
+    else opts.connectStream(h.profile);
   };
 
   const hostMenu = (e: React.MouseEvent, h: HostItem) => {
     const entries: MenuEntry[] =
-      h.kind === 'ssh'
+      h.kind === 'stream'
+        ? [
+            { label: 'Connect', icon: <Play size={13} />, onSelect: () => openHost(h) },
+            { label: 'Edit…', icon: <Pencil size={13} />, onSelect: () => opts.editStream(h.profile) },
+            {
+              label: 'Duplicate',
+              icon: <Copy size={13} />,
+              onSelect: () => run('Could not duplicate', () => SaveStreamProfile(streamForSave({ ...h.profile, id: crypto.randomUUID(), name: `${h.name} copy` }))),
+            },
+            { type: 'separator' },
+            { label: 'Delete', icon: <Trash2 size={13} />, danger: true, onSelect: () => deleteHost(h) },
+          ]
+        : h.kind === 'ssh'
         ? [
             { label: 'Connect', icon: <Play size={13} />, onSelect: () => openHost(h) },
             { label: 'Edit…', icon: <Pencil size={13} />, onSelect: () => opts.editSSH(h.profile) },
@@ -168,6 +192,7 @@ export function useHostLibrary(opts: Options) {
     openMenu(e, [
       { label: 'New SSH host here', icon: <Server size={13} />, onSelect: () => opts.newSSH(f.id) },
       { label: 'New RDP profile here', icon: <Monitor size={13} />, onSelect: () => opts.newRDP(f.id) },
+      { label: 'New Telnet or serial connection here', icon: <Cable size={13} />, onSelect: () => opts.newStream(f.id) },
       { label: 'New subfolder', icon: <FolderPlus size={13} />, onSelect: () => newFolder(f.id) },
       { type: 'separator' },
       { label: 'Rename', icon: <Pencil size={13} />, onSelect: () => setRenamingId(f.id) },
@@ -206,6 +231,7 @@ export function useHostLibrary(opts: Options) {
     openMenu(e, [
       { label: 'New SSH host', icon: <Plus size={13} />, onSelect: () => opts.newSSH('') },
       { label: 'New RDP profile', icon: <Monitor size={13} />, onSelect: () => opts.newRDP('') },
+      { label: 'New Telnet or serial connection', icon: <Cable size={13} />, onSelect: () => opts.newStream('') },
       { label: 'New folder', icon: <FolderPlus size={13} />, onSelect: () => newFolder('') },
       { type: 'separator' },
       { label: 'Import from another app…', icon: <Upload size={13} />, onSelect: () => setImportOpen(true) },
@@ -325,6 +351,7 @@ export function useHostLibrary(opts: Options) {
     folders,
     ssh,
     rdp,
+    streams,
     tree,
     folderChoices,
     reload,

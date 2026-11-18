@@ -156,6 +156,17 @@ export interface StreamSpec {
   dataBits: number;
   parity: string;
   stopBits: string;
+  /** Set when the session comes from a saved connection (StreamProfile). */
+  id?: string;
+  name?: string;
+}
+
+/** A saved Telnet or serial connection (store.StreamProfile). */
+export interface StreamProfile extends StreamSpec {
+  id: string;
+  name: string;
+  folderId?: string;
+  sortOrder?: number;
 }
 
 export interface TransferProgress {

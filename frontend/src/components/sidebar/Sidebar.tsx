@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ProtoBadge } from './ProtoBadge';
-import { Folder as FolderIcon, FolderPlus, Monitor, Plus, Search, X } from 'lucide-react';
-import type { Folder, RDPProfile, SSHProfile } from '../../types';
+import { ProtoBadge, hostIcon } from './ProtoBadge';
+import { Folder as FolderIcon, FolderPlus, Plus, Search, X } from 'lucide-react';
+import type { Folder, RDPProfile, SSHProfile, StreamProfile } from '../../types';
 import { Avatar } from '../ui/Avatar';
 import { HostTree } from './HostTree';
 import type { TreeActions } from './HostTree';
@@ -21,6 +21,7 @@ interface SidebarProps {
   folders: Folder[];
   sshProfiles: SSHProfile[];
   rdpProfiles: RDPProfile[];
+  streamProfiles: StreamProfile[];
   connectedIds: Set<string>;
   renamingId: string | null;
   onRenameDone: () => void;
@@ -39,13 +40,13 @@ function loadCollapsed(): Set<string> {
 }
 
 export function Sidebar(props: SidebarProps) {
-  const { width, rail, onResize, folders, sshProfiles, rdpProfiles } = props;
+  const { width, rail, onResize, folders, sshProfiles, rdpProfiles, streamProfiles } = props;
   const [query, setQuery] = useState('');
   const [collapsed, setCollapsed] = useState<Set<string>>(loadCollapsed);
   const [flyout, setFlyout] = useState<{ id: string; top: number } | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
 
-  const hosts = useMemo(() => hostItems(sshProfiles, rdpProfiles), [sshProfiles, rdpProfiles]);
+  const hosts = useMemo(() => hostItems(sshProfiles, rdpProfiles, streamProfiles), [sshProfiles, rdpProfiles, streamProfiles]);
   const tree = useMemo(() => buildTree(folders, hosts), [folders, hosts]);
 
   useEffect(() => {
@@ -149,7 +150,7 @@ export function Sidebar(props: SidebarProps) {
               onClick={() => props.actions.openHost(h)}
               onContextMenu={(e) => props.actions.hostMenu(e, h)}
             >
-              <Avatar label={h.name} colorKey={h.id} live={props.connectedIds.has(h.id)} icon={h.kind === 'rdp' ? <Monitor size={13} /> : undefined} size={30} />
+              <Avatar label={h.name} colorKey={h.id} live={props.connectedIds.has(h.id)} icon={hostIcon(h, 13)} size={30} />
             </button>
           ))}
         </div>
@@ -262,7 +263,7 @@ function SearchResults({
             onClick={() => actions.openHost(h)}
             onContextMenu={(e) => actions.hostMenu(e, h)}
           >
-            <Avatar label={h.name} colorKey={h.id} live={connected.has(h.id)} icon={h.kind === 'rdp' ? <Monitor size={12} /> : undefined} size={26} />
+            <Avatar label={h.name} colorKey={h.id} live={connected.has(h.id)} icon={hostIcon(h, 12)} size={26} />
             <span className="min-w-0 flex-1">
               <span className="flex items-center gap-1.5 min-w-0">
                 <span className="text-[12.5px] font-medium text-gray-200 truncate">{h.name}</span>

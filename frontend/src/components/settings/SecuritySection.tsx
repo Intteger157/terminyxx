@@ -198,7 +198,7 @@ export function SecuritySection({ settings, modKey }: { settings: AppSettings; m
         <Row label="Allow agent forwarding" hint="Off by default. When on, hosts with “Forward SSH agent” enabled in their settings get access to your agent.">
           <Toggle checked={sec.ssh.allowAgentForwarding} onChange={(v) => void setAgentForwarding(v)} />
         </Row>
-        <Row label="Trusted hosts" hint="Host keys you have verified (known_hosts). Changed keys are blocked with a warning.">
+        <Row label="Trusted hosts" hint="SSH host keys (known_hosts) and RDP certificates you have verified. Changed ones are blocked with a warning.">
           <button className="btn-secondary h-8" onClick={() => setTrustedHosts(true)}>
             <ShieldCheck size={13} /> Manage…
           </button>

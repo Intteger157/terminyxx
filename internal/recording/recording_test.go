@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRecordAndPlayback(t *testing.T) {
@@ -73,5 +74,58 @@ func TestTornLastLine(t *testing.T) {
 	rec, err := Read(dir, "a.cast")
 	if err != nil || len(rec.Events) != 1 {
 		t.Fatalf("%+v %v", rec, err)
+	}
+}
+
+func TestPrune(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name string, size int, age time.Duration) {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, make([]byte, size), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		when := time.Now().Add(-age)
+		if err := os.Chtimes(p, when, when); err != nil {
+			t.Fatal(err)
+		}
+	}
+	day := 24 * time.Hour
+	write("a.cast", 100, 40*day)
+	write("b.cast", 100, 10*day)
+	write("c.cast", 100, 5*day)
+	write("d.cast", 100, time.Hour)
+	write("notes.txt", 100, 90*day) // not a recording
+
+	// A recording in progress is old by mtime but must stay.
+	r, live, err := Start(dir, "live", 80, 24)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-60 * day)
+	_ = os.Chtimes(filepath.Join(dir, live), old, old)
+
+	if n, err := Prune(dir, 0, 0); n != 0 || err != nil {
+		t.Fatalf("no limits removed %d, %v", n, err)
+	}
+	if n, err := Prune(dir, 30*day, 0); n != 1 || err != nil {
+		t.Fatalf("age prune removed %d, %v", n, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "a.cast")); !os.IsNotExist(err) {
+		t.Fatal("a.cast survived")
+	}
+	// The live file counts toward the size but is skipped: b and c go.
+	st, _ := os.Stat(filepath.Join(dir, live))
+	if n, err := Prune(dir, 0, st.Size()+150); n != 2 || err != nil {
+		t.Fatalf("size prune removed %d, %v", n, err)
+	}
+	for name, want := range map[string]bool{"b.cast": false, "c.cast": false, "d.cast": true, "notes.txt": true, live: true} {
+		_, err := os.Stat(filepath.Join(dir, name))
+		if (err == nil) != want {
+			t.Fatalf("%s present=%v, want %v", name, err == nil, want)
+		}
+	}
+	r.Close()
+	if n, _ := Prune(dir, 30*day, 0); n != 1 {
+		t.Fatalf("finished live recording not pruned (%d)", n)
 	}
 }

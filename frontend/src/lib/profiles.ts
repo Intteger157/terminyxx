@@ -1,4 +1,4 @@
-import type { RDPOptions, RDPProfile, SSHProfile } from '../types';
+import type { RDPOptions, RDPProfile, SSHProfile, StreamProfile } from '../types';
 import { DEFAULT_HOST_OPTIONS } from './hostOptions';
 import { rdp, store } from '../../wailsjs/go/models';
 
@@ -19,6 +19,10 @@ export function sshForSave(p: SSHProfile) {
     identityId: p.identityId ?? '',
     options: { ...DEFAULT_HOST_OPTIONS, ...p.options },
   });
+}
+
+export function streamForSave(p: StreamProfile) {
+  return store.StreamProfile.createFrom({ ...p, folderId: p.folderId ?? '', sortOrder: p.sortOrder ?? 0 });
 }
 
 export const DEFAULT_RDP_OPTIONS: RDPOptions = {

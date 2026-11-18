@@ -5,11 +5,11 @@ import type { LayoutNode, TabGroup } from './layout';
 import type { TerminalTab } from '../types';
 
 // A workspace is a saved set of title-bar tabs with their split layouts,
-// where every pane is a saved SSH or RDP host. The same shape is used for the
+// where every pane is a saved SSH, RDP, Telnet or serial host. The same shape is used for the
 // session restored at startup.
 
 export interface WorkspacePane {
-  kind: 'ssh' | 'rdp';
+  kind: 'ssh' | 'rdp' | 'stream';
   profileId: string;
 }
 
@@ -27,13 +27,14 @@ export interface Workspace {
 function paneOf(tab: TerminalTab | undefined, saved: Set<string>): WorkspacePane | null {
   if (!tab) return null;
   if (tab.rdp && saved.has(tab.rdp.id)) return { kind: 'rdp', profileId: tab.rdp.id };
+  if (tab.stream?.id && saved.has(tab.stream.id)) return { kind: 'stream', profileId: tab.stream.id };
   if (tab.profile && saved.has(tab.profile.id)) return { kind: 'ssh', profileId: tab.profile.id };
   return null;
 }
 
 /**
  * Captures the open tabs (or only `groupIds`). Panes that are not saved hosts
- * (quick connections, Telnet, serial) are left out. Null if nothing is left.
+ * (quick connections) are left out. Null if nothing is left.
  */
 export function snapshot(
   name: string,

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Copy, KeyRound, Loader2, Lock, Search, ShieldCheck, Trash2 } from 'lucide-react';
-import { ListTrustedHosts, RemoveTrustedHost } from '../../../wailsjs/go/main/App';
+import { Copy, KeyRound, Loader2, Lock, Monitor, Search, ShieldCheck, Trash2 } from 'lucide-react';
+import { ListTrustedCerts, ListTrustedHosts, RemoveTrustedCert, RemoveTrustedHost } from '../../../wailsjs/go/main/App';
+import type { rdpgw } from '../../../wailsjs/go/models';
 import { Modal, errorText, useDialogs } from '../ui/Dialogs';
 import { copyText } from '../../lib/clipboard';
 
@@ -14,16 +15,20 @@ interface TrustedHost {
   source: 'app' | 'openssh' | string;
 }
 
-/** Lists known_hosts entries and revokes the app's own ones. */
+/** Lists known_hosts entries and accepted RDP certificates, and revokes the app's own ones. */
 export function TrustedHostsDialog({ onClose }: { onClose: () => void }) {
   const dialogs = useDialogs();
   const [hosts, setHosts] = useState<TrustedHost[] | null>(null);
+  const [certs, setCerts] = useState<rdpgw.TrustedCert[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
 
   const load = useCallback(() => {
     ListTrustedHosts()
       .then((h) => setHosts(h ?? []))
+      .catch((e) => setError(errorText(e)));
+    ListTrustedCerts()
+      .then((c) => setCerts(c ?? []))
       .catch((e) => setError(errorText(e)));
   }, []);
   useEffect(load, [load]);
@@ -33,6 +38,33 @@ export function TrustedHostsDialog({ onClose }: { onClose: () => void }) {
     if (!hosts || !q) return hosts ?? [];
     return hosts.filter((h) => (h.hosts ?? []).some((x) => x.toLowerCase().includes(q)) || h.fingerprint.toLowerCase().includes(q) || h.keyType.includes(q));
   }, [hosts, query]);
+
+  const shownCerts = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return certs;
+    return certs.filter((c) => c.dest.includes(q) || c.fingerprint.toLowerCase().includes(q) || c.subject.toLowerCase().includes(q));
+  }, [certs, query]);
+
+  const revokeCert = async (c: rdpgw.TrustedCert) => {
+    const ok = await dialogs.confirm({
+      title: 'Forget certificate?',
+      danger: true,
+      confirmLabel: 'Forget',
+      message: (
+        <p>
+          The certificate of <span className="font-mono text-gray-100">{c.dest}</span> will be forgotten. The next RDP connection asks you to verify it again.
+        </p>
+      ),
+    });
+    if (!ok) return;
+    try {
+      await RemoveTrustedCert(c.dest);
+      dialogs.toast(`Forgot the certificate of ${c.dest}`, 'success');
+      load();
+    } catch (e) {
+      dialogs.toast(errorText(e), 'error');
+    }
+  };
 
   const revoke = async (h: TrustedHost) => {
     const name = hostLabel(h);
@@ -62,7 +94,7 @@ export function TrustedHostsDialog({ onClose }: { onClose: () => void }) {
   return (
     <Modal
       title="Trusted hosts"
-      subtitle="Host keys you have verified. Terminyxx blocks a connection when a host's key no longer matches."
+      subtitle="Host keys and RDP certificates you have verified. Terminyxx stops a connection when they no longer match."
       icon={
         <span className="flex items-center justify-center w-8 h-8 rounded-xl bg-accent/15 text-accent ring-1 ring-inset ring-accent/25">
           <ShieldCheck size={16} />
@@ -87,6 +119,7 @@ export function TrustedHostsDialog({ onClose }: { onClose: () => void }) {
         {hosts && (
           <>
             <Group title="Trusted in Terminyxx" empty={query ? 'No matches.' : 'No hosts yet. Keys are added when you confirm a new host.'} items={app} onRevoke={revoke} />
+            <CertGroup certs={shownCerts} empty={query ? 'No matches.' : 'None yet. A certificate is added when you accept a self-signed or unverified one.'} onRevoke={revokeCert} />
             {openssh.length > 0 && (
               <Group
                 title="From ~/.ssh/known_hosts"
@@ -98,6 +131,52 @@ export function TrustedHostsDialog({ onClose }: { onClose: () => void }) {
         )}
       </div>
     </Modal>
+  );
+}
+
+function CertGroup({ certs, empty, onRevoke }: { certs: rdpgw.TrustedCert[]; empty: string; onRevoke: (c: rdpgw.TrustedCert) => void }) {
+  const date = (unix: number) => (unix ? new Date(unix * 1000).toLocaleDateString() : '');
+  return (
+    <section>
+      <div className="flex items-baseline justify-between mb-1.5">
+        <h3 className="text-[12.5px] font-semibold text-gray-300">RDP certificates</h3>
+        <span className="text-2xs text-gray-600 tabular-nums">{certs.length}</span>
+      </div>
+      {certs.length === 0 ? (
+        <p className="text-[12.5px] text-gray-500 py-3">{empty}</p>
+      ) : (
+        <div className="rounded-xl bg-white/[0.02] divide-y divide-white/[0.04] max-h-72 overflow-y-auto">
+          {certs.map((c) => {
+            const expired = c.notAfter > 0 && c.notAfter * 1000 < Date.now();
+            return (
+              <div key={c.dest} className="group flex items-center gap-3 px-3 py-2">
+                <Monitor size={14} className="flex-shrink-0 text-gray-500" />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 text-[12.5px] text-gray-200">
+                    <span className="truncate font-mono">{c.dest}</span>
+                    {c.subject && <span className="truncate text-2xs text-gray-500">{c.subject}</span>}
+                  </div>
+                  <div className="flex items-center gap-2 text-2xs text-gray-500 font-mono">
+                    {c.notAfter > 0 && (
+                      <span className={`flex-shrink-0 ${expired ? 'text-amber-300/90' : ''}`}>{expired ? 'expired' : 'until'} {date(c.notAfter)}</span>
+                    )}
+                    <span className="truncate" title={c.fingerprint}>
+                      {c.fingerprint}
+                    </span>
+                  </div>
+                </div>
+                <button className="icon-btn w-7 h-7 opacity-0 group-hover:opacity-100" title="Copy fingerprint" onClick={() => copyText(c.fingerprint)}>
+                  <Copy size={13} />
+                </button>
+                <button className="icon-btn w-7 h-7 hover:text-red-300" title={c.added ? `Forget (accepted ${date(c.added)})` : 'Forget'} onClick={() => onRevoke(c)}>
+                  <Trash2 size={13} />
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </section>
   );
 }
 

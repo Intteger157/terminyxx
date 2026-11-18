@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { hostTagColor } from '../../lib/hostOptions';
 import type { DragEvent, ReactNode } from 'react';
-import { ProtoBadge } from './ProtoBadge';
-import { ChevronRight, Folder as FolderIcon, FolderOpen, Monitor, MoreHorizontal } from 'lucide-react';
+import { ProtoBadge, hostIcon } from './ProtoBadge';
+import { ChevronRight, Folder as FolderIcon, FolderOpen, MoreHorizontal } from 'lucide-react';
 import { Avatar } from '../ui/Avatar';
 import type { DragItem, FolderNode, HostItem, Tree } from './tree';
 import { isInside } from './tree';
@@ -173,7 +173,7 @@ export function HostTree({ tree, rootId = '', connected, collapsed, onToggle, re
             label={h.name}
             colorKey={h.id}
             live={connected.has(h.id)}
-            icon={h.kind === 'rdp' ? <Monitor size={12} /> : undefined}
+            icon={hostIcon(h, 12)}
             size={26}
           />
           <span className="min-w-0 flex-1">

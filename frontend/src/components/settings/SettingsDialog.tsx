@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import type { ReactNode } from 'react';
 import { ArrowDown, ArrowUp, Check, Download, Highlighter, Info, Loader2, RefreshCw, Keyboard, Palette, Pencil, Plus, RotateCcw, ShieldCheck, CloudUpload, SquareTerminal, Trash2, UserRound, KeyRound, X } from 'lucide-react';
-import { Modal } from '../ui/Dialogs';
+import { Modal, errorText, useDialogs } from '../ui/Dialogs';
 import { Select } from '../ui/Select';
 import { TerminalPreview } from './TerminalPreview';
-import { DEFAULT_RULES, DEFAULT_SETTINGS, FONT_OPTIONS, HIGHLIGHT_COLORS, updateSettings, useSettings } from '../../lib/settings';
+import { DEFAULT_RULES, DEFAULT_SETTINGS, FONT_OPTIONS, HIGHLIGHT_COLORS, RECORDING_KEEP_OPTIONS, RECORDING_SIZE_OPTIONS, updateSettings, useSettings } from '../../lib/settings';
+import { pruneRecordings } from '../../lib/recordingCleanup';
 import type { AppSettings, HighlightColor, HighlightRule } from '../../lib/settings';
 import { THEMES, themeById } from '../../lib/themes';
 import type { TerminalTheme } from '../../lib/themes';
@@ -192,6 +193,8 @@ function TerminalSection({ settings }: { settings: AppSettings }) {
         </Row>
       </Section>
 
+      <RecordingsSettings settings={settings} />
+
       <Section title="Mouse & clipboard">
         <Row label="Copy on select" hint="Selected text is copied to the clipboard right away.">
           <Toggle checked={t.copyOnSelect} onChange={(v) => set({ copyOnSelect: v })} />
@@ -219,6 +222,38 @@ function TerminalSection({ settings }: { settings: AppSettings }) {
         </Row>
       </Section>
     </div>
+  );
+}
+
+function RecordingsSettings({ settings }: { settings: AppSettings }) {
+  const dialogs = useDialogs();
+  const r = settings.recordings;
+  const set = (patch: Partial<AppSettings['recordings']>) => {
+    updateSettings((s) => ({ ...s, recordings: { ...s.recordings, ...patch } }));
+    pruneRecordings()
+      .then((n) => n > 0 && dialogs.toast(`Deleted ${n} old recording${n === 1 ? '' : 's'}`, 'success'))
+      .catch((e) => dialogs.toast(`Could not clean up recordings: ${errorText(e)}`, 'error'));
+  };
+  const size = (mb: number) => (mb >= 1024 ? `${mb / 1024} GB` : `${mb} MB`);
+  return (
+    <Section title="Recordings">
+      <Row label="Keep recordings" hint="Finished recordings older than this are deleted at startup and when this changes.">
+        <Select
+          className="w-44"
+          value={String(r.keepDays)}
+          options={RECORDING_KEEP_OPTIONS.map((d) => ({ value: String(d), label: d === 0 ? 'Forever' : d === 365 ? '1 year' : `${d} days` }))}
+          onChange={(v) => set({ keepDays: Number(v) as AppSettings['recordings']['keepDays'] })}
+        />
+      </Row>
+      <Row label="Size limit" hint="While the recordings folder is larger, the oldest recordings are deleted. A recording in progress is never deleted.">
+        <Select
+          className="w-44"
+          value={String(r.maxSizeMB)}
+          options={RECORDING_SIZE_OPTIONS.map((mb) => ({ value: String(mb), label: mb === 0 ? 'No limit' : size(mb) }))}
+          onChange={(v) => set({ maxSizeMB: Number(v) as AppSettings['recordings']['maxSizeMB'] })}
+        />
+      </Row>
+    </Section>
   );
 }
 

@@ -14,6 +14,7 @@ import (
 	"io"
 	"math/big"
 	"net"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -156,7 +157,7 @@ func TestGatewaySession(t *testing.T) {
 		t.Fatal("LastError should explain the failure")
 	}
 
-	if err := trust.Trust(dest, ue.Fingerprint); err != nil {
+	if err := trust.Trust(dest, ue.Fingerprint, ue.Cert); err != nil {
 		t.Fatal(err)
 	}
 	url, token, err = g.Issue("tab1", host, port)
@@ -260,5 +261,40 @@ func TestChannelTicketsAreSingleUse(t *testing.T) {
 	bad := url[:strings.LastIndex(url, "=")+1] + "00"
 	if _, _, err := websocket.DefaultDialer.Dial(bad, nil); err == nil {
 		t.Fatal("unknown ticket accepted")
+	}
+}
+
+func TestTrustStoreListRemove(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "rdp_known_certs")
+	// A file written by an older version has only "dest fp".
+	if err := os.WriteFile(path, []byte("old.lan:3389 AA:BB\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s := NewTrustStore(path)
+	cert := &x509.Certificate{Subject: pkix.Name{CommonName: "srv one"}, NotAfter: time.Unix(2000000000, 0)}
+	if err := s.Trust("New.LAN:3389", "CC:DD", cert); err != nil {
+		t.Fatal(err)
+	}
+	list, err := s.List()
+	if err != nil || len(list) != 2 {
+		t.Fatalf("list = %+v, %v", list, err)
+	}
+	if list[0].Dest != "new.lan:3389" || list[0].Subject != "CN=srv one" || list[0].NotAfter != 2000000000 || list[0].Added == 0 {
+		t.Fatalf("new entry = %+v", list[0])
+	}
+	if list[1].Dest != "old.lan:3389" || list[1].Fingerprint != "AA:BB" || list[1].Subject != "" {
+		t.Fatalf("old entry = %+v", list[1])
+	}
+	if fp, ok := s.Lookup("new.lan:3389"); !ok || fp != "CC:DD" {
+		t.Fatalf("lookup = %q %v", fp, ok)
+	}
+	if err := s.Remove("OLD.lan:3389"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := s.Lookup("old.lan:3389"); ok {
+		t.Fatal("removed entry still trusted")
+	}
+	if err := s.Remove("old.lan:3389"); err == nil {
+		t.Fatal("removing a missing entry succeeded")
 	}
 }
