@@ -6,7 +6,7 @@ The built-in RDP client (`components/rdp/RdpPane.tsx`) uses these two packages i
 - `iron-remote-desktop-rdp`: the RDP backend, IronRDP compiled to WebAssembly (the `.wasm` is inlined as a `data:` URL).
 
 They are built from our fork [Intteger157/IronRDP](https://github.com/Intteger157/IronRDP), branch `terminyxx`, commit
-`6ad6e731cbf45ed2f00a4e0ee45dcd69e62a9438`: upstream [IronRDP](https://github.com/Devolutions/IronRDP) `abfc97b`
+`43d1540c170962ac24678115cb6c71eb0993b9e6`: upstream [IronRDP](https://github.com/Devolutions/IronRDP) `abfc97b`
 (2026-11-16, sspi 0.23.1) plus changes meant to go upstream:
 
 - `printers([...])` announces several printers (every local printer, each with its own driver), `onJobStart` gets the
@@ -14,6 +14,9 @@ They are built from our fork [Intteger157/IronRDP](https://github.com/Intteger15
 - `drives([...])` redirects folders. The browser can't open files, so each filesystem request of the host goes to
   `driveRequestCallback` and is completed when the page answers with `invokeExtension(driveReply({...}))`; directory
   listings are fetched once per query and enumerated in WASM. Printers and drives share one RDPDR backend.
+- `scale="fit"` (and `real`/`full`) sizes the picture to the element's own box instead of the space between the element
+  and the window's bottom-right corner, refits when the element resizes (`ResizeObserver`), and `resize()` no longer sets
+  the viewer to the requested size in desktop pixels (twice the CSS size on a Retina screen) before the server answers.
 
 The npm releases (`@devolutions/iron-remote-desktop-rdp` 0.7.0, May 2026) embed sspi 0.21.0. With that version, Windows 11
 refused NLA sign-in from Terminyxx with ERROR_LOGON_FAILURE even though Windows App accepted the same credentials, and Windows
