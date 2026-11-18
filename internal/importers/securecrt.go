@@ -120,7 +120,7 @@ func parseSecureCRT(text string) (Host, string, bool) {
 		KeyFile: expandKeyPath(key, ""),
 	}
 	if fw := strings.TrimPrefix(vals["Firewall Name"], "Session:"); fw != "" && !strings.EqualFold(fw, "None") {
-		h.Warning = "via " + fw
+		h.jumpName = fw // another session, linked in linkHops
 	}
 	return h, "", true
 }

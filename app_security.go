@@ -103,6 +103,7 @@ func (a *App) applySecurity(cfg security.SecurityConfig) {
 			AllowAgentForwarding: cfg.SSH.AllowAgentForwarding,
 		})
 	}
+	connection.SetAgentSource(cfg.SSH.Agent, cfg.SSH.AgentPath)
 }
 
 func (a *App) securityConfig() security.SecurityConfig {

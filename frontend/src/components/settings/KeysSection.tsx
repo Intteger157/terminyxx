@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Copy, KeyRound, Loader2, Lock, Plus, RefreshCw, Server } from 'lucide-react';
 import { Section } from './SettingsDialog';
 import { Field } from '../terminal/ConnectDialog';
@@ -7,6 +7,9 @@ import { copyText } from '../../lib/clipboard';
 import { shortFingerprint, suggestKeyName, useSSHKeys } from '../../lib/sshKeys';
 import type { SSHKey } from '../../lib/sshKeys';
 import { GenerateSSHKey } from '../../../wailsjs/go/main/App';
+import { updateSecurity, useSettings } from '../../lib/settings';
+import type { AgentSource } from '../../lib/settings';
+import { usePlatform } from '../../lib/hosts';
 
 export function KeysSection() {
   const { keys, agent, loading, error, reload } = useSSHKeys();
@@ -61,17 +64,22 @@ export function KeysSection() {
       </Section>
 
       <Section title="SSH agent">
+        <AgentPicker onChanged={() => window.setTimeout(() => void reload(), 300)} />
         {agent === null ? (
           <p className="text-[12.5px] text-gray-600">Could not ask the agent.</p>
         ) : !agent.running ? (
           <p className="text-[12.5px] text-gray-500 leading-relaxed">
-            No ssh-agent is running. On Windows, start the “OpenSSH Authentication Agent” service; on macOS, the system agent starts on its own. Keys are then added with <code className="font-mono">ssh-add</code>.
+            No agent answered. On Windows, start the “OpenSSH Authentication Agent” service or Pageant; on macOS, the system agent starts on its own. 1Password and other agents work once their SSH agent is turned on.
           </p>
         ) : agent.keys.length === 0 ? (
-          <p className="text-[12.5px] text-gray-500">The agent is running but holds no keys. Add one with <code className="font-mono">ssh-add</code>.</p>
+          <p className="text-[12.5px] text-gray-500">
+            {agent.source || 'The agent'} is running but holds no keys. Add one with <code className="font-mono">ssh-add</code> (or in Pageant, Add Key).
+          </p>
         ) : (
           <div className="space-y-1">
-            <p className="text-[12.5px] text-gray-400 mb-2">Hosts without a key file try these keys first.</p>
+            <p className="text-[12.5px] text-gray-400 mb-2">
+              Keys from <b className="font-medium text-gray-300">{agent.source || 'the agent'}</b>. Hosts without a key file try these first.
+            </p>
             {agent.keys.map((k) => (
               <div key={k.fingerprint} className="flex items-center gap-3 px-3 py-2 rounded-lg bg-white/[0.03]">
                 <Server size={14} className="text-gray-500 flex-shrink-0" />
@@ -89,6 +97,73 @@ export function KeysSection() {
           </div>
         )}
       </Section>
+    </div>
+  );
+}
+
+const AGENT_LABELS: Record<AgentSource, string> = {
+  auto: 'Automatic',
+  openssh: 'OpenSSH agent',
+  pageant: 'Pageant (PuTTY)',
+  custom: 'Other (socket or pipe)',
+};
+
+/** Which agent keys come from; the backend applies it when settings are saved. */
+function AgentPicker({ onChanged }: { onChanged: () => void }) {
+  const ssh = useSettings().security.ssh;
+  const platform = usePlatform();
+  const [path, setPath] = useState(ssh.agentPath);
+  useEffect(() => setPath(ssh.agentPath), [ssh.agentPath]);
+  const sources = (Object.keys(AGENT_LABELS) as AgentSource[]).filter((s) => s !== 'pageant' || platform !== 'darwin' || ssh.agent === 'pageant');
+  const commitPath = () => {
+    if (path.trim() === ssh.agentPath) return;
+    updateSecurity('ssh', { agentPath: path.trim() });
+    onChanged();
+  };
+  const hint =
+    ssh.agent === 'auto'
+      ? platform === 'windows'
+        ? 'Uses $SSH_AUTH_SOCK or the OpenSSH agent (also where 1Password and Bitwarden serve keys), then Pageant: the first one that holds keys.'
+        : 'Uses $SSH_AUTH_SOCK, then 1Password’s agent if it is on.'
+      : ssh.agent === 'custom'
+        ? platform === 'windows'
+          ? String.raw`A named pipe such as \\.\pipe\openssh-ssh-agent.`
+          : 'A unix socket, e.g. ~/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock.'
+        : '';
+  return (
+    <div className="mb-4 space-y-2">
+      <div className="grid grid-cols-2 gap-2">
+        <Field label="Get keys from">
+          <select
+            className="input-field"
+            value={ssh.agent}
+            onChange={(e) => {
+              updateSecurity('ssh', { agent: e.target.value as AgentSource });
+              onChanged();
+            }}
+          >
+            {sources.map((s) => (
+              <option key={s} value={s}>
+                {AGENT_LABELS[s]}
+              </option>
+            ))}
+          </select>
+        </Field>
+        {ssh.agent === 'custom' && (
+          <Field label="Path">
+            <input
+              className="input-field font-mono"
+              value={path}
+              onChange={(e) => setPath(e.target.value)}
+              onBlur={commitPath}
+              onKeyDown={(e) => e.key === 'Enter' && commitPath()}
+              placeholder={platform === 'windows' ? String.raw`\\.\pipe\…` : '~/…/agent.sock'}
+              spellCheck={false}
+            />
+          </Field>
+        )}
+      </div>
+      {hint && <p className="text-2xs text-gray-600 leading-relaxed">{hint}</p>}
     </div>
   );
 }

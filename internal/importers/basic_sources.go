@@ -55,6 +55,10 @@ func readOpenSSH(paths []string) (Result, error) {
 		return res, err
 	}
 	def := defaultUser()
+	alias := map[string]int{}
+	for i, h := range hosts {
+		alias[strings.ToLower(h.Alias)] = i
+	}
 	for _, h := range hosts {
 		u := h.User
 		if u == "" {
@@ -62,7 +66,21 @@ func readOpenSSH(paths []string) (Result, error) {
 		}
 		host := Host{Name: h.Alias, Kind: "ssh", Host: h.HostName, Port: h.Port, User: u, KeyFile: h.IdentityFile}
 		if h.ProxyJump != "" {
-			host.Warning = "via " + h.ProxyJump
+			host.Jump = parseHops(h.ProxyJump)
+			if host.Jump == nil {
+				host.Warning = "jump host not understood: " + h.ProxyJump
+			}
+			// A hop named like another Host block uses that block's settings.
+			for k, hop := range host.Jump {
+				if j, ok := alias[strings.ToLower(hop.Host)]; ok {
+					host.Jump[k].Index = j
+					if hop.Port == 22 && hosts[j].Port != 22 {
+						host.Jump[k].Port = hosts[j].Port
+					}
+				} else if hop.User == "" {
+					host.Jump[k].User = def
+				}
+			}
 		}
 		res.Hosts = append(res.Hosts, host)
 	}
@@ -79,7 +97,11 @@ func readMobaXterm(paths []string) (Result, error) {
 		for _, s := range m.Sessions {
 			h := Host{Name: s.Name, Folder: s.Folder, Kind: s.Kind, Host: s.Host, Port: s.Port, User: s.User, KeyFile: s.KeyFile}
 			if s.Gateway != "" {
-				h.Warning = "via " + s.Gateway
+				if hop, ok := parseHop(s.Gateway); ok {
+					h.Jump = []Hop{hop}
+				} else {
+					h.Warning = "gateway not understood: " + s.Gateway
+				}
 			}
 			res.Hosts = append(res.Hosts, h)
 		}

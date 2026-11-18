@@ -66,10 +66,8 @@ func readTabby(paths []string) (Result, error) {
 	for _, g := range cfg.Groups {
 		groups[g.ID] = g.Name
 	}
-	names := map[string]string{}
-	for _, p := range cfg.Profiles {
-		names[p.ID] = p.Name
-	}
+	// index of each imported profile in res.Hosts, by Tabby profile id
+	index := map[string]int{}
 	for _, p := range cfg.Profiles {
 		if p.Type != "ssh" {
 			if p.Type != "" && p.Type != "local" {
@@ -94,12 +92,22 @@ func readTabby(paths []string) (Result, error) {
 			h.KeyFile = tabbyKeyPath(p.Options.PrivateKeys[0])
 		}
 		if j := p.Options.JumpHost; j != "" {
-			if n, ok := names[j]; ok {
-				j = n
-			}
-			h.Warning = "via " + j
+			h.Jump = []Hop{{Index: -1, Port: 22, Host: j}} // resolved below
 		}
+		index[p.ID] = len(res.Hosts)
 		res.Hosts = append(res.Hosts, h)
+	}
+	for i := range res.Hosts {
+		if len(res.Hosts[i].Jump) == 1 {
+			ref := res.Hosts[i].Jump[0].Host
+			if j, ok := index[ref]; ok && j != i {
+				o := res.Hosts[j]
+				res.Hosts[i].Jump[0] = Hop{Index: j, Host: o.Host, Port: o.Port, User: o.User}
+			} else {
+				res.Hosts[i].Jump = nil
+				res.Hosts[i].Warning = "jump host profile not found"
+			}
+		}
 	}
 	return res, nil
 }

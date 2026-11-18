@@ -134,7 +134,8 @@ func TestWinSCPIni(t *testing.T) {
 	}
 	by := byName(res.Hosts)
 	db := by["Prod DB"]
-	if strings.Join(db.Folder, "/") != "Work" || db.User != "админ" || db.Port != 2222 || db.KeyFile != `C:\Keys\db.ppk` || db.Warning != "via jump@bastion" {
+	if strings.Join(db.Folder, "/") != "Work" || db.User != "админ" || db.Port != 2222 || db.KeyFile != `C:\Keys\db.ppk` ||
+		len(db.Jump) != 1 || db.Jump[0] != (Hop{Index: -1, Host: "bastion", Port: 22, User: "jump"}) {
 		t.Fatalf("winscp db = %+v", db)
 	}
 	if by["plain"].Port != 22 || len(res.Hosts) != 2 || res.Skipped["FTP"] != 1 {
@@ -155,7 +156,7 @@ func TestSecureCRT(t *testing.T) {
 		`S:"Firewall Name"=Session:bastion`,
 	}, "\r\n")...))
 	writeFile(t, dir, "switch.ini", []byte("S:\"Protocol Name\"=Telnet\r\nS:\"Hostname\"=10.0.0.1\r\n"))
-	res, err := readSecureCRT([]string{dir})
+	res, err := Read("securecrt", []string{dir})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,7 +165,7 @@ func TestSecureCRT(t *testing.T) {
 	}
 	h := res.Hosts[0]
 	if h.Name != "web-01" || strings.Join(h.Folder, "/") != "Production" || h.Port != 2218 || h.User != "deploy" ||
-		!strings.HasSuffix(strings.ReplaceAll(h.KeyFile, `\`, "/"), "keys/id_ed25519") || h.Warning != "via bastion" {
+		!strings.HasSuffix(strings.ReplaceAll(h.KeyFile, `\`, "/"), "keys/id_ed25519") || h.Warning != "jump host “bastion” not found" {
 		t.Fatalf("securecrt = %+v", h)
 	}
 	if res.Skipped["Telnet"] != 1 {
@@ -206,7 +207,7 @@ profiles:
 	}
 	by := byName(res.Hosts)
 	web := by["web-01"]
-	if web.Port != 2222 || strings.Join(web.Folder, "/") != "Production" || web.Warning != "via bastion" ||
+	if web.Port != 2222 || strings.Join(web.Folder, "/") != "Production" || len(web.Jump) != 1 || web.Jump[0] != (Hop{Index: 0, Host: "bastion.example.com", Port: 22, User: "jump"}) ||
 		filepath.ToSlash(web.KeyFile) != "C:/Users/me/.ssh/id_ed25519" {
 		t.Fatalf("tabby web = %+v", web)
 	}
@@ -287,5 +288,72 @@ func TestTermiusCSV(t *testing.T) {
 	bad := writeFile(t, dir, "bad.csv", []byte("a,b\n1,2\n"))
 	if _, err := Read("termius", []string{bad}); err == nil {
 		t.Error("CSV without a host column should error")
+	}
+}
+
+func TestParseHops(t *testing.T) {
+	cases := map[string]Hop{
+		"bastion":                {Index: -1, Host: "bastion", Port: 22},
+		"me@bastion:2200":        {Index: -1, Host: "bastion", Port: 2200, User: "me"},
+		"ssh://a.b@[fd00::1]:23": {Index: -1, Host: "fd00::1", Port: 23, User: "a.b"},
+		"[fd00::2]":              {Index: -1, Host: "fd00::2", Port: 22},
+	}
+	for in, want := range cases {
+		if got, ok := parseHop(in); !ok || got != want {
+			t.Errorf("parseHop(%q) = %+v, %v", in, got, ok)
+		}
+	}
+	for _, bad := range []string{"", "h:0", "h:x", "a b"} {
+		if _, ok := parseHop(bad); ok {
+			t.Errorf("parseHop(%q) should fail", bad)
+		}
+	}
+	if hops := parseHops("a, u@b:2"); len(hops) != 2 || hops[1].User != "u" || hops[1].Port != 2 {
+		t.Fatalf("hops = %+v", hops)
+	}
+	if parseHops("a,b:x") != nil {
+		t.Fatal("a bad hop must drop the chain")
+	}
+}
+
+func TestOpenSSHProxyJump(t *testing.T) {
+	cfg := strings.Join([]string{
+		"Host bastion",
+		"    HostName bastion.example.com",
+		"    Port 2200",
+		"    User jump",
+		"Host inner",
+		"    HostName 10.0.0.2",
+		"    ProxyJump bastion",
+		"Host db",
+		"    HostName 10.0.0.3",
+		"    User postgres",
+		"    ProxyJump bastion,admin@10.0.0.2",
+		"Host far",
+		"    HostName far.example.com",
+		"    ProxyJump ops@gw.example.com:2022",
+		"Host cache",
+		"    HostName 10.0.0.4",
+		"    ProxyJump inner",
+	}, "\n")
+	p := writeFile(t, t.TempDir(), "config", []byte(cfg))
+	res, err := Read("openssh", []string{p})
+	if err != nil {
+		t.Fatal(err)
+	}
+	by := byName(res.Hosts)
+	if in := by["inner"]; len(in.Jump) != 1 || in.Jump[0] != (Hop{Index: 0, Host: "bastion.example.com", Port: 2200, User: "jump"}) {
+		t.Fatalf("inner = %+v", in.Jump)
+	}
+	db := by["db"]
+	// "admin@10.0.0.2" has another user than the inner host, so it stays an address.
+	if len(db.Jump) != 2 || db.Jump[0].Index != 0 || db.Jump[1] != (Hop{Index: -1, Host: "10.0.0.2", Port: 22, User: "admin"}) {
+		t.Fatalf("db = %+v", db.Jump)
+	}
+	if far := by["far"]; len(far.Jump) != 1 || far.Jump[0] != (Hop{Index: -1, Host: "gw.example.com", Port: 2022, User: "ops"}) {
+		t.Fatalf("far = %+v", far.Jump)
+	}
+	if c := by["cache"]; len(c.Jump) != 1 || c.Jump[0].Index != 1 || c.Jump[0].Host != "10.0.0.2" {
+		t.Fatalf("cache = %+v", c.Jump)
 	}
 }

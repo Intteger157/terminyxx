@@ -87,11 +87,18 @@ export interface AppSettings {
     ssh: {
       modernAlgorithmsOnly: boolean;
       allowAgentForwarding: boolean;
+      /** Where agent keys come from (connection.AgentAuto…). */
+      agent: AgentSource;
+      /** Socket or named pipe for agent 'custom'. */
+      agentPath: string;
     };
     /** What remote programs may do with the clipboard through OSC 52. */
     osc52: Osc52Policy;
   };
 }
+
+export type AgentSource = 'auto' | 'openssh' | 'pageant' | 'custom';
+const AGENT_SOURCES: AgentSource[] = ['auto', 'openssh', 'pageant', 'custom'];
 
 export const AUTO_LOCK_OPTIONS = [0, 1, 5, 15, 30] as const;
 export type AutoLockMinutes = (typeof AUTO_LOCK_OPTIONS)[number];
@@ -204,7 +211,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     clipboard: { autoClear: true, clearAfterSeconds: 30, scope: 'sensitive' },
     paste: { warnMultiline: true, warnDangerous: true },
     masking: { enabled: false, maskIPs: false },
-    ssh: { modernAlgorithmsOnly: true, allowAgentForwarding: false },
+    ssh: { modernAlgorithmsOnly: true, allowAgentForwarding: false, agent: 'auto', agentPath: '' },
     osc52: 'prompt',
   },
 };
@@ -279,7 +286,12 @@ function normalize(raw: unknown): AppSettings {
       },
       paste: { warnMultiline: !!paste.warnMultiline, warnDangerous: !!paste.warnDangerous },
       masking: { enabled: !!mask.enabled, maskIPs: !!mask.maskIPs },
-      ssh: { modernAlgorithmsOnly: !!ssh.modernAlgorithmsOnly, allowAgentForwarding: !!ssh.allowAgentForwarding },
+      ssh: {
+        modernAlgorithmsOnly: !!ssh.modernAlgorithmsOnly,
+        allowAgentForwarding: !!ssh.allowAgentForwarding,
+        agent: AGENT_SOURCES.includes(ssh.agent) ? ssh.agent : 'auto',
+        agentPath: typeof ssh.agentPath === 'string' ? ssh.agentPath.slice(0, 1024) : '',
+      },
       osc52: (['disabled', 'prompt', 'write'] as const).includes(sec.osc52) ? sec.osc52 : ds.osc52,
     },
   };

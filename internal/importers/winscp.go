@@ -96,11 +96,11 @@ func winscpSessions(sessions map[string]map[string]string) ([]Host, map[string]i
 			KeyFile: pubToPrivate(winscpUnescape(v["PublicKeyFile"])),
 		}
 		if v["Tunnel"] == "1" && v["TunnelHostName"] != "" {
-			gw := winscpUnescape(v["TunnelHostName"])
-			if u := winscpUnescape(v["TunnelUserName"]); u != "" {
-				gw = u + "@" + gw
+			hop := Hop{Index: -1, Host: winscpUnescape(v["TunnelHostName"]), Port: 22, User: winscpUnescape(v["TunnelUserName"])}
+			if p, err := strconv.Atoi(v["TunnelPortNumber"]); err == nil && p > 0 && p <= 65535 {
+				hop.Port = p
 			}
-			h.Warning = "via " + gw
+			h.Jump = []Hop{hop}
 		}
 		hosts = append(hosts, h)
 	}

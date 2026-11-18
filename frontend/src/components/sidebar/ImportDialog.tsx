@@ -1,12 +1,17 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, CheckCircle2, FileUp, FolderOpen, Loader2, Monitor, Upload } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, FileUp, FolderOpen, Loader2, Monitor, Route, Upload } from 'lucide-react';
 import { Modal, errorText } from '../ui/Dialogs';
 import { Toggle } from '../terminal/ConnectDialog';
 import type { RDPProfile, SSHProfile } from '../../types';
+import type { ImportHop } from '../../lib/importJumps';
 import { ListImportSources, PickImportPaths, ReadImport } from '../../../wailsjs/go/main/App';
 
 export interface ImportItem {
   key: string;
+  /** Position in the source's list (jump hops refer to it). */
+  index: number;
+  /** Jump hosts, outermost first. */
+  jump: ImportHop[];
   name: string;
   folder: string[];
   kind: 'ssh' | 'rdp';
@@ -43,6 +48,10 @@ interface ImportDialogProps {
   onImport: (items: ImportItem[], rootFolder: string, keepFolders: boolean) => Promise<void>;
 }
 
+/** "bastion → inner" for the hops of it. */
+const hopNames = (it: ImportItem, all: ImportItem[]) =>
+  it.jump.map((h) => all.find((x) => x.index === h.index)?.name ?? (h.user ? `${h.user}@${h.host}` : h.host) + (h.port !== 22 ? `:${h.port}` : '')).join(' → ');
+
 const pickLabel = (pick: string) => (pick === 'folder' ? 'Choose folder…' : pick === 'files' ? 'Choose files…' : 'Choose file…');
 
 export function ImportDialog({ existingSSH, existingRDP, onClose, onImport }: ImportDialogProps) {
@@ -72,7 +81,7 @@ export function ImportDialog({ existingSSH, existingRDP, onClose, onImport }: Im
       setError(null);
       try {
         const res = await ReadImport(id, paths);
-        const items: ImportItem[] = (res.hosts ?? []).map((h, i) => ({ ...h, key: `${i}:${h.name}`, folder: h.folder ?? [], kind: h.kind === 'rdp' ? 'rdp' : 'ssh' }));
+        const items: ImportItem[] = (res.hosts ?? []).map((h, i) => ({ ...h, key: `${i}:${h.name}`, index: i, jump: h.jump ?? [], folder: h.folder ?? [], kind: h.kind === 'rdp' ? 'rdp' : 'ssh' }));
         setLoaded({ path: res.path, items, notes: res.notes ?? [], skipped: res.skipped ?? {} });
         setSelected(new Set(items.filter((it) => !isDuplicate(it)).map((it) => it.key)));
       } catch (err) {
@@ -241,11 +250,16 @@ export function ImportDialog({ existingSSH, existingRDP, onClose, onImport }: Im
                           <span className="text-2xs px-1.5 rounded bg-white/[0.05] text-gray-500 truncate max-w-[40%]">{it.folder.join(' / ')}</span>
                         )}
                         {isDuplicate(it) && <span className="text-2xs px-1.5 rounded bg-white/[0.06] text-gray-400 flex-shrink-0">already saved</span>}
-                        {it.warning && (
+                        {it.jump.length > 0 && (
                           <span
-                            className="flex items-center gap-1 text-2xs px-1.5 rounded bg-amber-400/10 text-amber-300 flex-shrink-0"
-                            title="Jump hosts are not supported yet; this host may not be reachable directly."
+                            className="flex items-center gap-1 text-2xs px-1.5 rounded bg-white/[0.06] text-gray-400 flex-shrink-0 max-w-[40%] truncate"
+                            title={`Connects through ${hopNames(it, items)}. Jump hosts that aren’t saved or imported yet are added as hosts.`}
                           >
+                            <Route size={10} className="flex-shrink-0" /> via {hopNames(it, items)}
+                          </span>
+                        )}
+                        {it.warning && (
+                          <span className="flex items-center gap-1 text-2xs px-1.5 rounded bg-amber-400/10 text-amber-300 flex-shrink-0" title={it.warning}>
                             <AlertTriangle size={10} /> {it.warning}
                           </span>
                         )}

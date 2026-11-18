@@ -25,8 +25,12 @@ type Host struct {
 	Port    int      `json:"port"`
 	User    string   `json:"user"`
 	KeyFile string   `json:"keyFile"`
-	// Warning is shown next to the host, e.g. an unsupported jump host.
+	// Jump is the chain of jump hosts (ProxyJump, gateway), outermost first.
+	Jump []Hop `json:"jump"`
+	// Warning is shown next to the host, e.g. a jump host that can't be read.
 	Warning string `json:"warning"`
+	// jumpName is a jump host given by the name of another session.
+	jumpName string
 	// RDP only.
 	Domain     string `json:"domain"`
 	Width      int    `json:"width"`
@@ -122,6 +126,7 @@ func Read(id string, paths []string) (Result, error) {
 		if res.Hosts == nil {
 			res.Hosts = []Host{}
 		}
+		linkHops(&res)
 		if res.Skipped == nil {
 			res.Skipped = map[string]int{}
 		}

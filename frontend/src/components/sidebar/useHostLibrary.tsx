@@ -20,6 +20,7 @@ import type { TreeActions } from './HostTree';
 import type { DragItem, FolderNode, HostItem } from './tree';
 import { FOLDER_COLORS, buildTree, folderOptions, hostItems, hostsUnder } from './tree';
 import { rdpForSave, sshForSave } from '../../lib/profiles';
+import { planJumps } from '../../lib/importJumps';
 import { copyText } from '../../lib/clipboard';
 import { useAppLock } from '../../lib/appLock';
 import {
@@ -242,10 +243,20 @@ export function useHostLibrary(opts: Options) {
       return parent;
     };
 
+    const ids = new Map(items.map((it) => [it.key, crypto.randomUUID()]));
+    const plan = planJumps(
+      items.filter((it) => it.kind === 'ssh').map((it) => ({ index: it.index, id: ids.get(it.key)!, user: it.user, jump: it.jump })),
+      ssh
+    );
+
     let failed = 0;
+    // Jump hosts nothing matched are added next to the first host that needs them.
+    const hopFolder = new Map<string, string>();
     for (const it of items) {
       try {
         const folderId = await ensureFolder([...(rootFolder ? [rootFolder] : []), ...(keepFolders ? it.folder : [])]);
+        const id = ids.get(it.key)!;
+        for (let j = plan.jumpOf.get(id); j && !hopFolder.has(j); j = plan.jumpOf.get(j)) hopFolder.set(j, folderId);
         if (it.kind === 'rdp') {
           await SaveRDPProfile(
             rdpForSave({
@@ -265,7 +276,8 @@ export function useHostLibrary(opts: Options) {
         } else {
           await SaveSSHProfile(
             sshForSave({
-              id: crypto.randomUUID(),
+              id,
+              jumpProfileId: plan.jumpOf.get(id) ?? '',
               name: it.name,
               host: it.host,
               port: it.port,
@@ -281,12 +293,32 @@ export function useHostLibrary(opts: Options) {
         failed++;
       }
     }
+    let hops = 0;
+    for (const h of plan.created) {
+      try {
+        await SaveSSHProfile(
+          sshForSave({
+            id: h.id,
+            jumpProfileId: plan.jumpOf.get(h.id) ?? '',
+            name: h.user ? `${h.user}@${h.host}` : h.host,
+            host: h.host,
+            port: h.port,
+            username: h.user,
+            authType: 'password',
+            password: '',
+            keyPath: '',
+            folderId: hopFolder.get(h.id) ?? (await ensureFolder(rootFolder ? [rootFolder] : [])),
+          })
+        );
+        hops++;
+      } catch {
+        failed++;
+      }
+    }
     await reload();
     setImportOpen(false);
-    dialogs.toast(
-      failed ? `Imported ${items.length - failed}, ${failed} failed` : `Imported ${items.length} host${items.length === 1 ? '' : 's'}`,
-      failed ? 'error' : 'success'
-    );
+    const done = `Imported ${items.length + hops - failed} host${items.length + hops - failed === 1 ? '' : 's'}${hops ? ` (${hops} jump host${hops === 1 ? '' : 's'} added)` : ''}`;
+    dialogs.toast(failed ? `${done}, ${failed} failed` : done, failed ? 'error' : 'success');
   };
 
   return {

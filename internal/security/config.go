@@ -67,6 +67,10 @@ type SSHConfig struct {
 	// AllowAgentForwarding is the global switch for agent forwarding; hosts
 	// opt in individually.
 	AllowAgentForwarding bool `json:"allowAgentForwarding"`
+	// Agent is where agent keys come from: auto, openssh, pageant or custom
+	// (AgentPath, a unix socket or a Windows named pipe).
+	Agent     string `json:"agent"`
+	AgentPath string `json:"agentPath"`
 }
 
 // Defaults match DEFAULT_SETTINGS.security in the frontend.
@@ -77,7 +81,7 @@ func Defaults() SecurityConfig {
 		Clipboard:       ClipboardConfig{AutoClear: true, ClearAfterSeconds: 30, Scope: "sensitive"},
 		Paste:           PasteConfig{WarnMultiline: true, WarnDangerous: true},
 		Masking:         MaskingConfig{},
-		SSH:             SSHConfig{ModernAlgorithmsOnly: true},
+		SSH:             SSHConfig{ModernAlgorithmsOnly: true, Agent: "auto"},
 		OSC52:           "prompt",
 	}
 }

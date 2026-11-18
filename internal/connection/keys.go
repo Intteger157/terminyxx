@@ -15,18 +15,21 @@ import (
 
 // AgentStatus is what the local ssh-agent holds.
 type AgentStatus struct {
-	Running bool               `json:"running"`
-	Keys    []sshkeys.AgentKey `json:"keys"`
+	Running bool `json:"running"`
+	// Source names the agent that answered, e.g. "Pageant".
+	Source string             `json:"source"`
+	Keys   []sshkeys.AgentKey `json:"keys"`
 }
 
 // ListAgentKeys lists the keys loaded in the local ssh-agent.
 func ListAgentKeys() (AgentStatus, error) {
 	st := AgentStatus{Keys: []sshkeys.AgentKey{}}
-	conn := dialAgent()
+	conn, source := openAgent()
 	if conn == nil {
 		return st, nil
 	}
 	defer conn.Close()
+	st.Source = source
 	keys, err := agent.NewClient(conn).List()
 	if err != nil {
 		return st, err
