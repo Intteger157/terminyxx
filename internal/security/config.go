@@ -71,6 +71,11 @@ type SSHConfig struct {
 	// (AgentPath, a unix socket or a Windows named pipe).
 	Agent     string `json:"agent"`
 	AgentPath string `json:"agentPath"`
+	// AllowX11Forwarding is the global switch for X11 forwarding; hosts opt
+	// in individually. X11Display is the local X server ("" = $DISPLAY or
+	// localhost:0.0).
+	AllowX11Forwarding bool   `json:"allowX11Forwarding"`
+	X11Display         string `json:"x11Display"`
 }
 
 // Defaults match DEFAULT_SETTINGS.security in the frontend.

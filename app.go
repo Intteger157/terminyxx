@@ -173,10 +173,13 @@ func (a *App) SSHConnect(req connection.ConnectRequest) error {
 			}
 		}
 	}
-	// Terminal charset and startup commands always come from the saved host.
-	req.Encoding, req.Startup = "", ""
+	// Terminal charset, startup commands, proxy and X11 always come from the
+	// saved host (a ProxyCommand runs a local program).
+	req.Encoding, req.Startup, req.Proxy, req.X11 = "", "", connection.ProxySpec{}, false
 	if req.JumpFor != "" && a.data != nil {
 		if p, err := a.data.GetSSHProfile(req.JumpFor); err == nil {
+			req.Proxy = a.proxyFor(p)
+			req.X11 = p.X11Forwarding && !p.SFTPOnly
 			req.Encoding = p.Options.Encoding
 			if !p.SFTPOnly {
 				req.Startup = p.Options.StartupCommands
@@ -223,10 +226,24 @@ func (a *App) resolveJumpChain(profileID string) ([]connection.ConnectRequest, e
 			Host: hop.Host, Port: hop.Port, Username: hop.Username, AuthType: hop.AuthType,
 			Password: pw, KeyPath: hop.KeyPath, ProfileID: hop.ID,
 			AllowLegacyAlgorithms: hop.AllowLegacyAlgorithms,
+			Proxy:                 a.proxyFor(hop),
 		}}, chain...)
 		cur = hop
 	}
 	return chain, nil
+}
+
+// proxyFor turns a saved host's proxy settings into a ProxySpec, with the
+// proxy password from the keychain.
+func (a *App) proxyFor(p store.SSHProfile) connection.ProxySpec {
+	if p.Proxy.Type == "" {
+		return connection.ProxySpec{}
+	}
+	spec := connection.ProxySpec{Type: p.Proxy.Type, Host: p.Proxy.Host, Port: p.Proxy.Port, Username: p.Proxy.Username, Command: p.Proxy.Command}
+	if p.Proxy.HasPassword {
+		spec.Password, _ = a.data.ProxyPassword(p.ID)
+	}
+	return spec
 }
 
 // autoStartTunnels starts the saved forwards marked "start with host".

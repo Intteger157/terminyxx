@@ -1,5 +1,7 @@
 import { useState } from 'react';
-import { ArrowRight, LayoutGrid, Plus, TerminalSquare, Trash2, Upload } from 'lucide-react';
+import { ArrowRight, Clock, LayoutGrid, Plus, TerminalSquare, Trash2, Upload } from 'lucide-react';
+import type { HostItem } from '../sidebar/tree';
+import { hostIcon } from '../sidebar/ProtoBadge';
 import type { Workspace } from '../../lib/workspaces';
 import type { SSHProfile } from '../../types';
 import { Avatar } from '../ui/Avatar';
@@ -9,6 +11,9 @@ import type { Platform, QuickTarget } from '../../lib/hosts';
 interface WelcomeProps {
   platform: Platform;
   profiles: SSHProfile[];
+  /** Recently opened saved hosts, newest first. */
+  recent: HostItem[];
+  onOpenHost: (h: HostItem) => void;
   onConnect: (profile: SSHProfile) => void;
   onQuickConnect: (target: QuickTarget) => void;
   onNew: () => void;
@@ -18,7 +23,7 @@ interface WelcomeProps {
   onDeleteWorkspace: (w: Workspace) => void;
 }
 
-export function Welcome({ platform, profiles, onConnect, onQuickConnect, onNew, onImport, workspaces, onOpenWorkspace, onDeleteWorkspace }: WelcomeProps) {
+export function Welcome({ platform, profiles, recent, onOpenHost, onConnect, onQuickConnect, onNew, onImport, workspaces, onOpenWorkspace, onDeleteWorkspace }: WelcomeProps) {
   const [value, setValue] = useState('');
   const target = parseQuickTarget(value);
   const mod = modKey(platform);
@@ -65,6 +70,30 @@ export function Welcome({ platform, profiles, onConnect, onQuickConnect, onNew, 
             ? `SSH to ${target.username ? target.username + '@' : ''}${target.host} on port ${target.port}`
             : 'Type an address like root@10.0.0.5 or deploy@example.com:2222'}
         </p>
+
+        {recent.length > 0 && (
+          <div className="mt-10">
+            <h2 className="label mb-3 flex items-center gap-1.5">
+              <Clock size={12} /> Recent
+            </h2>
+            <div className="grid grid-cols-2 gap-2">
+              {recent.map((h) => (
+                <button
+                  key={`${h.kind}:${h.id}`}
+                  onClick={() => onOpenHost(h)}
+                  className="group card flex items-center gap-3 px-3 py-2.5 text-left hover:border-border-strong hover:bg-surface-raised transition-all"
+                >
+                  <Avatar label={h.name} colorKey={h.id} icon={hostIcon(h, 14)} size={32} />
+                  <span className="min-w-0 flex-1">
+                    <span className="block font-medium text-gray-200 truncate">{h.name}</span>
+                    <span className="block text-2xs text-gray-500 truncate font-mono">{h.detail}</span>
+                  </span>
+                  <ArrowRight size={14} className="text-gray-600 opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all" />
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         {workspaces.length > 0 && (
           <div className="mt-10">

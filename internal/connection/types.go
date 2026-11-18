@@ -56,6 +56,11 @@ type ConnectRequest struct {
 	// Startup is typed into the shell once it has started, on every
 	// connect. App.SSHConnect fills both from the saved host.
 	Startup string `json:"startup"`
+	// Proxy is used when this host is dialed directly (it is the target
+	// without jump hosts, or the first hop). Filled from the saved host.
+	Proxy ProxySpec `json:"proxy"`
+	// X11 asks for X11 forwarding (only with the global switch on).
+	X11 bool `json:"x11"`
 }
 
 type FileEntry struct {

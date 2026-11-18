@@ -22,6 +22,10 @@ export function DeleteIdentity(arg1) {
   return window['go']['main']['App']['DeleteIdentity'](arg1);
 }
 
+export function DeleteInventory(arg1) {
+  return window['go']['main']['App']['DeleteInventory'](arg1);
+}
+
 export function DeleteRDPProfile(arg1) {
   return window['go']['main']['App']['DeleteRDPProfile'](arg1);
 }
@@ -40,6 +44,10 @@ export function DeleteSnippet(arg1) {
 
 export function DeleteStreamProfile(arg1) {
   return window['go']['main']['App']['DeleteStreamProfile'](arg1);
+}
+
+export function ExportSSHConfig(arg1) {
+  return window['go']['main']['App']['ExportSSHConfig'](arg1);
 }
 
 export function ExportSync(arg1, arg2) {
@@ -110,12 +118,20 @@ export function ListFolders() {
   return window['go']['main']['App']['ListFolders']();
 }
 
+export function ListHostMeta() {
+  return window['go']['main']['App']['ListHostMeta']();
+}
+
 export function ListIdentities() {
   return window['go']['main']['App']['ListIdentities']();
 }
 
 export function ListImportSources() {
   return window['go']['main']['App']['ListImportSources']();
+}
+
+export function ListInventories() {
+  return window['go']['main']['App']['ListInventories']();
 }
 
 export function ListLocalDir(arg1) {
@@ -200,6 +216,10 @@ export function OpenURL(arg1) {
 
 export function PickImportPaths(arg1) {
   return window['go']['main']['App']['PickImportPaths'](arg1);
+}
+
+export function PingHosts(arg1) {
+  return window['go']['main']['App']['PingHosts'](arg1);
 }
 
 export function PruneRecordings(arg1, arg2) {
@@ -350,8 +370,16 @@ export function SaveFolder(arg1) {
   return window['go']['main']['App']['SaveFolder'](arg1);
 }
 
+export function SaveHostMeta(arg1) {
+  return window['go']['main']['App']['SaveHostMeta'](arg1);
+}
+
 export function SaveIdentity(arg1) {
   return window['go']['main']['App']['SaveIdentity'](arg1);
+}
+
+export function SaveInventory(arg1) {
+  return window['go']['main']['App']['SaveInventory'](arg1);
 }
 
 export function SaveRDPProfile(arg1) {
@@ -422,8 +450,16 @@ export function StreamConnect(arg1) {
   return window['go']['main']['App']['StreamConnect'](arg1);
 }
 
+export function SyncInventory(arg1) {
+  return window['go']['main']['App']['SyncInventory'](arg1);
+}
+
 export function TestBiometrics() {
   return window['go']['main']['App']['TestBiometrics']();
+}
+
+export function TouchHost(arg1, arg2) {
+  return window['go']['main']['App']['TouchHost'](arg1, arg2);
 }
 
 export function UnlockApp(arg1) {

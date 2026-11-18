@@ -200,3 +200,20 @@ export function halfRect(r: Rect, side: Side): Rect {
       return { ...r, y: r.y + r.h / 2, h: r.h / 2 };
   }
 }
+
+/** A grid of panes: rows of up to ceil(sqrt(n)) panes, as even as possible. */
+export function gridLayout(ids: string[]): LayoutNode {
+  if (ids.length === 1) return { kind: 'pane', id: ids[0] };
+  const cols = Math.ceil(Math.sqrt(ids.length));
+  const rows: LayoutNode[] = [];
+  for (let i = 0; i < ids.length; i += cols) {
+    const chunk = ids.slice(i, i + cols);
+    rows.push(
+      chunk.length === 1
+        ? { kind: 'pane', id: chunk[0] }
+        : { kind: 'split', id: crypto.randomUUID(), dir: 'row', children: chunk.map((id) => ({ kind: 'pane', id })), sizes: chunk.map(() => 1 / chunk.length) }
+    );
+  }
+  if (rows.length === 1) return rows[0];
+  return { kind: 'split', id: crypto.randomUUID(), dir: 'column', children: rows, sizes: rows.map(() => 1 / rows.length) };
+}

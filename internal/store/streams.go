@@ -132,6 +132,7 @@ ON CONFLICT(id) DO UPDATE SET
 }
 
 func (s *Store) DeleteStreamProfile(id string) error {
+	s.deleteMeta(KindStream, id)
 	_, err := s.db.Exec(`DELETE FROM stream_profiles WHERE id = ?`, id)
 	return err
 }

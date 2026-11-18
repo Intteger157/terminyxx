@@ -27,6 +27,9 @@ type Host struct {
 	KeyFile string   `json:"keyFile"`
 	// Jump is the chain of jump hosts (ProxyJump, gateway), outermost first.
 	Jump []Hop `json:"jump"`
+	// ProxyCommand (OpenSSH) is run locally to reach the host.
+	ProxyCommand string `json:"proxyCommand"`
+	X11          bool   `json:"x11"`
 	// Warning is shown next to the host, e.g. a jump host that can't be read.
 	Warning string `json:"warning"`
 	// jumpName is a jump host given by the name of another session.

@@ -19,6 +19,8 @@ type ptyOptions struct {
 	mask func() MaskOptions
 	// forwardAgent requests agent forwarding for the session.
 	forwardAgent bool
+	// x11 requests X11 forwarding for the session (nil: off).
+	x11 *x11Forwarder
 	// recorder returns the active session recording, or nil.
 	recorder func() *recording.Recorder
 	// charset is the server's terminal encoding; nil means UTF-8.
@@ -68,6 +70,11 @@ func NewPTYSession(client *ssh.Client, emitter EventEmitter, connID string, cols
 	_ = session.Setenv("COLORTERM", "truecolor")
 	if opts.forwardAgent {
 		_ = agent.RequestAgentForwarding(session)
+	}
+	if opts.x11 != nil {
+		if err := opts.x11.request(session); err != nil {
+			emitter.Emit("terminal:output:"+connID, "\r\n\x1b[33m[X11 forwarding: "+err.Error()+"]\x1b[0m\r\n")
+		}
 	}
 
 	stdin, err := session.StdinPipe()

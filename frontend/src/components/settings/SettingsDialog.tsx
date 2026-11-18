@@ -4,7 +4,7 @@ import { ArrowDown, ArrowUp, Check, Download, Highlighter, Info, Loader2, Refres
 import { Modal, errorText, useDialogs } from '../ui/Dialogs';
 import { Select } from '../ui/Select';
 import { TerminalPreview } from './TerminalPreview';
-import { DEFAULT_RULES, DEFAULT_SETTINGS, FONT_OPTIONS, HIGHLIGHT_COLORS, RECORDING_KEEP_OPTIONS, RECORDING_SIZE_OPTIONS, updateSettings, useSettings } from '../../lib/settings';
+import { AVAILABILITY_OPTIONS, DEFAULT_RULES, DEFAULT_SETTINGS, FONT_OPTIONS, HIGHLIGHT_COLORS, RECORDING_KEEP_OPTIONS, RECORDING_SIZE_OPTIONS, updateSettings, useSettings } from '../../lib/settings';
 import { pruneRecordings } from '../../lib/recordingCleanup';
 import type { AppSettings, HighlightColor, HighlightRule } from '../../lib/settings';
 import { THEMES, themeById } from '../../lib/themes';
@@ -190,6 +190,36 @@ function TerminalSection({ settings }: { settings: AppSettings }) {
         </Row>
         <Row label="Restore tabs at startup" hint="Reopen the saved hosts and split layout that were open when Terminyxx closed. To keep layouts by name, save them as workspaces from the command palette or a tab's menu.">
           <Toggle checked={settings.sessions.restore} onChange={(v) => updateSettings((s) => ({ ...s, sessions: { ...s.sessions, restore: v } }))} />
+        </Row>
+      </Section>
+
+      <Section title="Host list">
+        <Row
+          label="Show availability"
+          hint="A green or red dot next to hosts in the sidebar: Terminyxx opens a TCP connection to the host's port (SSH 22, RDP 3389, Telnet 23) and closes it at once. Only hosts you can see are checked; hosts behind a jump host or proxy are skipped."
+        >
+          <Toggle
+            checked={settings.hosts.availability}
+            onChange={(v) => updateSettings((s) => ({ ...s, hosts: { ...s.hosts, availability: v } }))}
+          />
+        </Row>
+        {settings.hosts.availability && (
+          <Row label="Check every" hint="While the window is visible.">
+            <Select
+              className="w-44"
+              value={String(settings.hosts.availabilitySeconds)}
+              options={AVAILABILITY_OPTIONS.map((n) => ({ value: String(n), label: n < 60 ? `${n} seconds` : n === 60 ? '1 minute' : `${n / 60} minutes` }))}
+              onChange={(v) => updateSettings((s) => ({ ...s, hosts: { ...s.hosts, availabilitySeconds: Number(v) as AppSettings['hosts']['availabilitySeconds'] } }))}
+            />
+          </Row>
+        )}
+        <Row label="Recent hosts" hint="How many recently opened hosts the sidebar shows above the folders.">
+          <Select
+            className="w-44"
+            value={String(settings.hosts.recentCount)}
+            options={[0, 3, 5, 10].map((n) => ({ value: String(n), label: n === 0 ? 'Hidden' : `${n} hosts` }))}
+            onChange={(v) => updateSettings((s) => ({ ...s, hosts: { ...s.hosts, recentCount: Number(v) } }))}
+          />
         </Row>
       </Section>
 

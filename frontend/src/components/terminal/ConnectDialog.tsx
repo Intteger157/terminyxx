@@ -6,7 +6,9 @@ import { THEMES } from '../../lib/themes';
 import { useSSHKeys } from '../../lib/sshKeys';
 import type { HostOptions } from '../../types';
 import { Select } from '../ui/Select';
-import type { SavedTunnel, SSHProfile } from '../../types';
+import type { ProxySettings, SavedTunnel, SSHProfile } from '../../types';
+import { HostNotesFields, sameNotes } from '../sidebar/HostNotesFields';
+import type { NotesValue } from '../sidebar/HostNotesFields';
 import { JumpHostSelect, TunnelEditor } from './TunnelEditor';
 import { Modal, useDialogs } from '../ui/Dialogs';
 import { confirmAgentForwarding } from '../security/securityPrompts';
@@ -21,7 +23,13 @@ interface ConnectDialogProps {
   onConnect: (profile: SSHProfile, save: boolean, connect: boolean) => void;
   /** Shown for a brand-new host: switches this dialog to the RDP one, carrying over what was typed. */
   onSwitchToRdp?: (carry: { host: string; folderId: string }) => void;
+  /** The saved host's tags and notes. */
+  notes?: NotesValue;
+  /** Saves tags and notes of a saved host (called only when they changed). */
+  onSaveNotes?: (id: string, v: NotesValue) => void;
 }
+
+const NO_PROXY: ProxySettings = { type: '', host: '', port: 1080, username: '', password: '', command: '' };
 
 /** SSH | RDP selector shown at the top of both "new host" dialogs. */
 export function ProtocolSwitch({ value, onChange }: { value: 'ssh' | 'rdp'; onChange: (v: 'ssh' | 'rdp') => void }) {
@@ -46,7 +54,7 @@ export function ProtocolSwitch({ value, onChange }: { value: 'ssh' | 'rdp'; onCh
 }
 
 // Mount with a fresh `key` each time it opens so fields reset.
-export function ConnectDialog({ initial, folders, onClose, onConnect, onSwitchToRdp }: ConnectDialogProps) {
+export function ConnectDialog({ initial, folders, onClose, onConnect, onSwitchToRdp, notes: initialNotes, onSaveNotes }: ConnectDialogProps) {
   const editing = !!initial?.id;
   const [name, setName] = useState(initial?.name ?? '');
   const [host, setHost] = useState(initial?.host ?? '');
@@ -61,11 +69,17 @@ export function ConnectDialog({ initial, folders, onClose, onConnect, onSwitchTo
   const savedPassword = editing && !!initial?.hasPassword && !forgetPassword;
   const [allowLegacy, setAllowLegacy] = useState(!!initial?.allowLegacyAlgorithms);
   const [agentForwarding, setAgentForwarding] = useState(!!initial?.agentForwarding);
-  const [advanced, setAdvanced] = useState(allowLegacy || agentForwarding);
+  const [x11, setX11] = useState(!!initial?.x11Forwarding);
+  const [advanced, setAdvanced] = useState(allowLegacy || agentForwarding || x11);
+  const [proxy, setProxy] = useState<ProxySettings>({ ...NO_PROXY, ...initial?.proxy, password: '' });
+  const setProxyField = (patch: Partial<ProxySettings>) => setProxy((p) => ({ ...p, ...patch }));
+  const savedProxyPassword = editing && !!initial?.proxy?.hasPassword && !proxy.clearPassword;
+  const startNotes: NotesValue = initialNotes ?? { tags: [], notes: '' };
+  const [notes, setNotes] = useState<NotesValue>(startNotes);
   const [sftpOnly, setSftpOnly] = useState(!!initial?.sftpOnly);
   const [jumpProfileId, setJumpProfileId] = useState(initial?.jumpProfileId ?? '');
   const [tunnels, setTunnels] = useState<SavedTunnel[]>(initial?.tunnels ?? []);
-  const [network, setNetwork] = useState(!!initial?.jumpProfileId || (initial?.tunnels?.length ?? 0) > 0);
+  const [network, setNetwork] = useState(!!initial?.jumpProfileId || (initial?.tunnels?.length ?? 0) > 0 || !!initial?.proxy?.type);
   const [options, setOptions] = useState<HostOptions>({ ...DEFAULT_HOST_OPTIONS, ...initial?.options });
   const setOpt = (patch: Partial<HostOptions>) => setOptions((o) => ({ ...o, ...patch }));
   const termCustomized = !!(options.color || options.startupCommands.trim() || options.encoding || options.themeId);
@@ -105,14 +119,34 @@ export function ConnectDialog({ initial, folders, onClose, onConnect, onSwitchTo
         agentForwarding,
         jumpProfileId,
         sftpOnly,
+        x11Forwarding: x11,
+        proxy:
+          proxy.type === ''
+            ? { ...NO_PROXY }
+            : {
+                ...proxy,
+                host: proxy.host.trim(),
+                port: Number(proxy.port) || (proxy.type === 'http' ? 3128 : 1080),
+                username: proxy.username.trim(),
+                command: proxy.command.trim(),
+                hasPassword: savedProxyPassword && !proxy.password,
+              },
         tunnels: tunnels.filter((t) => t.kind === 'dynamic' || (t.destHost.trim() && t.destPort > 0)).map((t) => ({ ...t, destHost: t.destHost.trim(), bindHost: t.bindHost.trim() })),
   });
+  const saveNotes = (p: SSHProfile) => {
+    if (onSaveNotes && !sameNotes(notes, startNotes)) onSaveNotes(p.id, notes);
+  };
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    onConnect(build(), saveProfile || editing, true);
+    const p = build();
+    if (saveProfile || editing) saveNotes(p);
+    onConnect(p, saveProfile || editing, true);
   };
   const saveOnly = () => {
-    if (formRef.current?.reportValidity()) onConnect(build(), true, false);
+    if (!formRef.current?.reportValidity()) return;
+    const p = build();
+    saveNotes(p);
+    onConnect(p, true, false);
   };
 
   const browseKey = async () => {
@@ -275,7 +309,7 @@ export function ConnectDialog({ initial, folders, onClose, onConnect, onSwitchTo
           >
             <ChevronRight size={13} className={`transition-transform ${advanced ? 'rotate-90' : ''}`} />
             Security options
-            {(allowLegacy || agentForwarding) && <ShieldAlert size={12} className="text-amber-400 ml-1" />}
+            {(allowLegacy || agentForwarding || x11) && <ShieldAlert size={12} className="text-amber-400 ml-1" />}
           </button>
           {advanced && (
             <div className="mt-3 space-y-3 pl-4 animate-fade-in">
@@ -295,6 +329,16 @@ export function ConnectDialog({ initial, folders, onClose, onConnect, onSwitchTo
                     : 'Agent forwarding is turned off in Settings → Security, so this has no effect until you allow it there.'}
                 </p>
               </div>
+              {!sftpOnly && (
+                <div>
+                  <Toggle checked={x11} onChange={setX11} label="Forward X11" />
+                  <p className={`mt-1 ml-[42px] text-2xs ${x11 && !sshSec.allowX11Forwarding ? 'text-amber-300/90' : 'text-gray-600'}`}>
+                    {sshSec.allowX11Forwarding
+                      ? `Runs graphical programs from the server on your local X server (${sshSec.x11Display || 'VcXsrv or XQuartz'}). The server can see what happens in those windows.`
+                      : 'X11 forwarding is turned off in Settings → Security, so this has no effect until you allow it there.'}
+                  </p>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -307,11 +351,85 @@ export function ConnectDialog({ initial, folders, onClose, onConnect, onSwitchTo
             aria-expanded={network}
           >
             <ChevronRight size={13} className={`transition-transform ${network ? 'rotate-90' : ''}`} />
-            Jump host and tunnels
-            {(jumpProfileId || tunnels.length > 0) && <span className="ml-1 text-2xs text-accent">{[jumpProfileId && 'jump', tunnels.length > 0 && `${tunnels.length} tunnel${tunnels.length > 1 ? 's' : ''}`].filter(Boolean).join(', ')}</span>}
+            Proxy, jump host and tunnels
+            {(jumpProfileId || tunnels.length > 0 || proxy.type) && (
+              <span className="ml-1 text-2xs text-accent">
+                {[proxy.type && 'proxy', jumpProfileId && 'jump', tunnels.length > 0 && `${tunnels.length} tunnel${tunnels.length > 1 ? 's' : ''}`].filter(Boolean).join(', ')}
+              </span>
+            )}
           </button>
           {network && (
             <div className="mt-3 space-y-3 pl-4 animate-fade-in">
+              <Field
+                label="Proxy"
+                hint={
+                  jumpProfileId
+                    ? 'With a jump host, the proxy of the first jump host is used, not this one.'
+                    : proxy.type === 'command'
+                      ? 'Runs on this computer for every connect; %h, %p and %r become host, port and user (like OpenSSH ProxyCommand).'
+                      : 'For networks that only allow outgoing connections through a proxy.'
+                }
+              >
+                <Select
+                  value={proxy.type}
+                  onChange={(v) => setProxyField({ type: v, port: proxy.port || (v === 'http' ? 3128 : 1080) })}
+                  options={[
+                    { value: '', label: 'Direct connection' },
+                    { value: 'socks5', label: 'SOCKS5 proxy' },
+                    { value: 'http', label: 'HTTP proxy (CONNECT)' },
+                    { value: 'command', label: 'ProxyCommand' },
+                  ]}
+                />
+              </Field>
+              {(proxy.type === 'socks5' || proxy.type === 'http') && (
+                <>
+                  <div className="grid grid-cols-[1fr_88px] gap-2">
+                    <Field label="Proxy host">
+                      <input className="input-field font-mono" value={proxy.host} onChange={(e) => setProxyField({ host: e.target.value })} required spellCheck={false} placeholder="proxy.corp.local" />
+                    </Field>
+                    <Field label="Port">
+                      <input className="input-field font-mono" type="number" min={1} max={65535} value={proxy.port} onChange={(e) => setProxyField({ port: Number(e.target.value) })} required />
+                    </Field>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <Field label="Proxy user (optional)">
+                      <input className="input-field font-mono" value={proxy.username} onChange={(e) => setProxyField({ username: e.target.value })} spellCheck={false} />
+                    </Field>
+                    <Field label="Proxy password">
+                      <div className="relative">
+                        <input
+                          className="input-field pr-16"
+                          type="password"
+                          value={proxy.password}
+                          placeholder={savedProxyPassword ? '••••  saved' : ''}
+                          onChange={(e) => setProxyField({ password: e.target.value })}
+                        />
+                        {savedProxyPassword && !proxy.password && (
+                          <button
+                            type="button"
+                            className="absolute right-1.5 top-1/2 -translate-y-1/2 h-6 px-2 rounded-md text-2xs text-gray-400 hover:text-red-300 hover:bg-red-500/10"
+                            onClick={() => setProxyField({ clearPassword: true })}
+                          >
+                            Forget
+                          </button>
+                        )}
+                      </div>
+                    </Field>
+                  </div>
+                </>
+              )}
+              {proxy.type === 'command' && (
+                <Field label="Command">
+                  <input
+                    className="input-field font-mono"
+                    value={proxy.command}
+                    onChange={(e) => setProxyField({ command: e.target.value })}
+                    required
+                    spellCheck={false}
+                    placeholder="cloudflared access ssh --hostname %h"
+                  />
+                </Field>
+              )}
               <Field label="Connect through" hint="Reach this host via another saved host (like ssh -J).">
                 <JumpHostSelect value={jumpProfileId} selfId={initial?.id} onChange={setJumpProfileId} />
               </Field>
@@ -396,6 +514,8 @@ export function ConnectDialog({ initial, folders, onClose, onConnect, onSwitchTo
             </div>
           )}
         </div>
+
+        {(editing || saveProfile) && <HostNotesFields value={notes} onChange={setNotes} />}
 
         <div className="pt-1 border-t border-white/[0.05]" />
 

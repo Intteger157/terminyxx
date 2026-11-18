@@ -19,6 +19,9 @@ export interface ImportItem {
   port: number;
   user: string;
   keyFile: string;
+  /** OpenSSH ProxyCommand, run locally to reach the host. */
+  proxyCommand?: string;
+  x11?: boolean;
   warning: string;
   domain: string;
   width: number;

@@ -55,6 +55,28 @@ export namespace connection {
 		    return a;
 		}
 	}
+	export class ProxySpec {
+	    type: string;
+	    host: string;
+	    port: number;
+	    username: string;
+	    password: string;
+	    command: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ProxySpec(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.type = source["type"];
+	        this.host = source["host"];
+	        this.port = source["port"];
+	        this.username = source["username"];
+	        this.password = source["password"];
+	        this.command = source["command"];
+	    }
+	}
 	export class ConnectRequest {
 	    id: string;
 	    host: string;
@@ -73,6 +95,8 @@ export namespace connection {
 	    jumpFor: string;
 	    encoding: string;
 	    startup: string;
+	    proxy: ProxySpec;
+	    x11: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new ConnectRequest(source);
@@ -97,6 +121,8 @@ export namespace connection {
 	        this.jumpFor = source["jumpFor"];
 	        this.encoding = source["encoding"];
 	        this.startup = source["startup"];
+	        this.proxy = this.convertValues(source["proxy"], ProxySpec);
+	        this.x11 = source["x11"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -219,6 +245,7 @@ export namespace connection {
 	        this.txPerSec = source["txPerSec"];
 	    }
 	}
+	
 	export class StreamRequest {
 	    id: string;
 	    kind: string;
@@ -373,6 +400,8 @@ export namespace importers {
 	    user: string;
 	    keyFile: string;
 	    jump: Hop[];
+	    proxyCommand: string;
+	    x11: boolean;
 	    warning: string;
 	    domain: string;
 	    width: number;
@@ -393,6 +422,8 @@ export namespace importers {
 	        this.user = source["user"];
 	        this.keyFile = source["keyFile"];
 	        this.jump = this.convertValues(source["jump"], Hop);
+	        this.proxyCommand = source["proxyCommand"];
+	        this.x11 = source["x11"];
 	        this.warning = source["warning"];
 	        this.domain = source["domain"];
 	        this.width = source["width"];
@@ -483,8 +514,75 @@ export namespace importers {
 
 }
 
+export namespace inventory {
+	
+	export class Config {
+	    url: string;
+	    tokenId: string;
+	    fingerprint: string;
+	    accessKeyId: string;
+	    regions: string[];
+	    username: string;
+	    keyPath: string;
+	    identityId: string;
+	    address: string;
+	    runningOnly: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new Config(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.url = source["url"];
+	        this.tokenId = source["tokenId"];
+	        this.fingerprint = source["fingerprint"];
+	        this.accessKeyId = source["accessKeyId"];
+	        this.regions = source["regions"];
+	        this.username = source["username"];
+	        this.keyPath = source["keyPath"];
+	        this.identityId = source["identityId"];
+	        this.address = source["address"];
+	        this.runningOnly = source["runningOnly"];
+	    }
+	}
+
+}
+
 export namespace main {
 	
+	export class PingResult {
+	    key: string;
+	    up: boolean;
+	    ms: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new PingResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.key = source["key"];
+	        this.up = source["up"];
+	        this.ms = source["ms"];
+	    }
+	}
+	export class PingTarget {
+	    key: string;
+	    host: string;
+	    port: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new PingTarget(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.key = source["key"];
+	        this.host = source["host"];
+	        this.port = source["port"];
+	    }
+	}
 	export class RDPSession {
 	    proxyUrl: string;
 	    token: string;
@@ -948,6 +1046,28 @@ export namespace store {
 	        this.sortOrder = source["sortOrder"];
 	    }
 	}
+	export class HostMeta {
+	    kind: string;
+	    id: string;
+	    favorite: boolean;
+	    tags: string[];
+	    notes: string;
+	    lastUsed: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new HostMeta(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.kind = source["kind"];
+	        this.id = source["id"];
+	        this.favorite = source["favorite"];
+	        this.tags = source["tags"];
+	        this.notes = source["notes"];
+	        this.lastUsed = source["lastUsed"];
+	    }
+	}
 	export class HostOptions {
 	    color: string;
 	    startupCommands: string;
@@ -1018,6 +1138,100 @@ export namespace store {
 	        this.flagsReset = source["flagsReset"];
 	    }
 	}
+	export class Inventory {
+	    id: string;
+	    name: string;
+	    kind: string;
+	    config: inventory.Config;
+	    folderId: string;
+	    lastSync: number;
+	    secret: string;
+	    hasSecret: boolean;
+	    clearSecret: boolean;
+	    hosts: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new Inventory(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.kind = source["kind"];
+	        this.config = this.convertValues(source["config"], inventory.Config);
+	        this.folderId = source["folderId"];
+	        this.lastSync = source["lastSync"];
+	        this.secret = source["secret"];
+	        this.hasSecret = source["hasSecret"];
+	        this.clearSecret = source["clearSecret"];
+	        this.hosts = source["hosts"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class InventorySync {
+	    added: number;
+	    updated: number;
+	    unchanged: number;
+	    gone: string[];
+	    noAddress: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new InventorySync(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.added = source["added"];
+	        this.updated = source["updated"];
+	        this.unchanged = source["unchanged"];
+	        this.gone = source["gone"];
+	        this.noAddress = source["noAddress"];
+	    }
+	}
+	export class ProxySettings {
+	    type: string;
+	    host: string;
+	    port: number;
+	    username: string;
+	    password: string;
+	    hasPassword: boolean;
+	    clearPassword: boolean;
+	    command: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ProxySettings(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.type = source["type"];
+	        this.host = source["host"];
+	        this.port = source["port"];
+	        this.username = source["username"];
+	        this.password = source["password"];
+	        this.hasPassword = source["hasPassword"];
+	        this.clearPassword = source["clearPassword"];
+	        this.command = source["command"];
+	    }
+	}
 	export class Tunnel {
 	    id: string;
 	    kind: string;
@@ -1062,6 +1276,8 @@ export namespace store {
 	    sftpOnly: boolean;
 	    identityId: string;
 	    options: HostOptions;
+	    proxy: ProxySettings;
+	    x11Forwarding: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new SSHProfile(source);
@@ -1088,6 +1304,8 @@ export namespace store {
 	        this.sftpOnly = source["sftpOnly"];
 	        this.identityId = source["identityId"];
 	        this.options = this.convertValues(source["options"], HostOptions);
+	        this.proxy = this.convertValues(source["proxy"], ProxySettings);
+	        this.x11Forwarding = source["x11Forwarding"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

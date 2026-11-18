@@ -18,6 +18,10 @@ type Policy struct {
 	StrictAlgorithms bool
 	// AllowAgentForwarding is the global switch; a host must also ask for it.
 	AllowAgentForwarding bool
+	// AllowX11 is the global switch for X11 forwarding; a host must also
+	// ask for it. X11Display is the local display ("" = DefaultX11Display).
+	AllowX11   bool
+	X11Display string
 }
 
 // DefaultPolicy is used until the app's settings are loaded.

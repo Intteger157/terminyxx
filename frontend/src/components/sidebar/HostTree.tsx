@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { hostTagColor } from '../../lib/hostOptions';
 import type { DragEvent, ReactNode } from 'react';
 import { ProtoBadge, hostIcon } from './ProtoBadge';
-import { ChevronRight, Folder as FolderIcon, FolderOpen, MoreHorizontal } from 'lucide-react';
+import { ChevronRight, Folder as FolderIcon, FolderOpen, MoreHorizontal, Star } from 'lucide-react';
 import { Avatar } from '../ui/Avatar';
 import type { DragItem, FolderNode, HostItem, Tree } from './tree';
 import { isInside } from './tree';
@@ -11,6 +11,9 @@ import { setPaneDrag } from '../../lib/paneDrag';
 export interface TreeActions {
   openHost: (h: HostItem) => void;
   hostMenu: (e: React.MouseEvent, h: HostItem) => void;
+  /** Context menu for several selected hosts. */
+  selectionMenu: (e: React.MouseEvent, hosts: HostItem[]) => void;
+  toggleFavorite: (h: HostItem) => void;
   folderMenu: (e: React.MouseEvent, f: FolderNode) => void;
   move: (item: DragItem, parentId: string, index: number) => void;
   renameFolder: (id: string, name: string) => void;
@@ -27,6 +30,45 @@ interface HostTreeProps {
   onRenameDone: () => void;
   actions: TreeActions;
   footer?: ReactNode;
+  /** Pinned lists shown above the tree (Favorites, Recent). */
+  sections?: TreeSection[];
+  /** Selected hosts (Ctrl/Cmd/Shift+click). */
+  selection?: HostItem[];
+  /** Ctrl/Cmd/Shift+click on a host; plain clicks open it and clear the selection. */
+  onSelectClick?: (h: HostItem, e: React.MouseEvent) => void;
+  onClearSelection?: () => void;
+  /** Availability by host key ("ssh:<id>"): true up, false down, absent unknown. */
+  reach?: Map<string, boolean>;
+}
+
+export interface TreeSection {
+  id: string;
+  title: string;
+  icon: ReactNode;
+  hosts: HostItem[];
+}
+
+/** Second line of a host row: address and tags. */
+export function hostSubtitle(h: HostItem): string {
+  return h.meta.tags.length ? `${h.detail} · ${h.meta.tags.map((t) => `#${t}`).join(' ')}` : h.detail;
+}
+
+/** Tooltip of a host row: address, tags and notes. */
+export function hostTooltip(h: HostItem): string {
+  const lines = [h.detail];
+  if (h.meta.tags.length) lines.push(h.meta.tags.map((t) => `#${t}`).join(' '));
+  if (h.meta.notes.trim()) lines.push('', h.meta.notes.trim().slice(0, 600));
+  return lines.join('\n');
+}
+
+export function ReachDot({ up }: { up: boolean | undefined }) {
+  if (up === undefined) return null;
+  return (
+    <span
+      className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${up ? 'bg-emerald-400' : 'bg-red-400/90'}`}
+      title={up ? 'Reachable' : 'Not reachable'}
+    />
+  );
 }
 
 type DropPos = 'before' | 'after' | 'into';
@@ -40,7 +82,23 @@ let dragging: DragItem | null = null;
 
 const INDENT = 14;
 
-export function HostTree({ tree, rootId = '', connected, collapsed, onToggle, renamingId, onRenameDone, actions, footer }: HostTreeProps) {
+export function HostTree({
+  tree,
+  rootId = '',
+  connected,
+  collapsed,
+  onToggle,
+  renamingId,
+  onRenameDone,
+  actions,
+  footer,
+  sections = [],
+  selection = [],
+  onSelectClick,
+  onClearSelection,
+  reach,
+}: HostTreeProps) {
+  const selectedKeys = new Set(selection.map((h) => `${h.kind}:${h.id}`));
   const [drop, setDrop] = useState<DropTarget | null>(null);
   const [draggingKey, setDraggingKey] = useState<string | null>(null);
   const expandTimer = useRef<number | undefined>(undefined);
@@ -144,30 +202,45 @@ export function HostTree({ tree, rootId = '', connected, collapsed, onToggle, re
     if (item) actions.move(item, rootId, -1);
   };
 
-  const renderHost = (h: HostItem, depth: number) => {
+  const renderHost = (h: HostItem, depth: number, pinned?: string) => {
     const key = `${h.kind}:${h.id}`;
-    const indicator = drop?.key === key ? drop.pos : null;
+    const indicator = !pinned && drop?.key === key ? drop.pos : null;
+    const selected = selectedKeys.has(key);
     return (
       <div
-        key={key}
+        key={pinned ? `${pinned}:${key}` : key}
         draggable
         onDragStart={(e) => {
-          startDrag(e, { kind: h.kind, id: h.id });
+          if (pinned) {
+            // Rows in Favorites / Recent only drag onto panes, not within the tree.
+            e.dataTransfer.effectAllowed = 'copy';
+            e.dataTransfer.setData('text/plain', h.id);
+          } else startDrag(e, { kind: h.kind, id: h.id });
           if (h.kind === 'ssh') setPaneDrag({ kind: 'host', profile: h.profile });
         }}
         onDragEnd={endDrag}
-        onDragOver={(e) => overHost(e, h)}
-        onDragLeave={() => drop?.key === key && setDrop(null)}
-        onDrop={(e) => dropOnHost(e, h)}
-        onContextMenu={(e) => actions.hostMenu(e, h)}
-        className={`group relative ${draggingKey === key ? 'opacity-40' : ''}`}
+        onDragOver={pinned ? undefined : (e) => overHost(e, h)}
+        onDragLeave={pinned ? undefined : () => drop?.key === key && setDrop(null)}
+        onDrop={pinned ? undefined : (e) => dropOnHost(e, h)}
+        onContextMenu={(e) => (selected && selection.length > 1 ? actions.selectionMenu(e, selection) : actions.hostMenu(e, h))}
+        className={`group relative ${draggingKey === key && !pinned ? 'opacity-40' : ''}`}
       >
         {indicator && indicator !== 'into' && <DropLine pos={indicator} depth={depth} />}
         <button
-          className="w-full flex items-center gap-2.5 py-1 pr-7 rounded-lg text-left hover:bg-white/[0.05] active:bg-white/[0.07] transition-colors"
+          className={`w-full flex items-center gap-2.5 py-1 pr-7 rounded-lg text-left transition-colors ${
+            selected ? 'bg-accent/15 ring-1 ring-inset ring-accent/40' : 'hover:bg-white/[0.05] active:bg-white/[0.07]'
+          }`}
           style={{ paddingLeft: 8 + depth * INDENT }}
-          onClick={() => actions.openHost(h)}
-          title={h.detail}
+          onClick={(e) => {
+            if (onSelectClick && (e.ctrlKey || e.metaKey || e.shiftKey)) {
+              e.preventDefault();
+              onSelectClick(h, e);
+              return;
+            }
+            onClearSelection?.();
+            actions.openHost(h);
+          }}
+          title={hostTooltip(h)}
         >
           <Avatar
             label={h.name}
@@ -183,8 +256,10 @@ export function HostTree({ tree, rootId = '', connected, collapsed, onToggle, re
                 <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: hostTagColor(h.profile) }} title="Color tag" />
               )}
               <ProtoBadge host={h} />
+              {h.meta.favorite && <Star size={10} className="flex-shrink-0 text-amber-300 fill-amber-300" />}
+              <ReachDot up={reach?.get(key)} />
             </span>
-            <span className="block text-2xs text-gray-500 truncate">{h.detail}</span>
+            <span className="block text-2xs text-gray-500 truncate">{hostSubtitle(h)}</span>
           </span>
         </button>
         <button
@@ -276,8 +351,28 @@ export function HostTree({ tree, rootId = '', connected, collapsed, onToggle, re
     );
   };
 
+  const renderSection = (sec: TreeSection) => {
+    const open = !collapsed.has(sec.id);
+    return (
+      <div key={sec.id}>
+        <div
+          className="group flex items-center gap-1.5 h-7 pl-1 pr-1 rounded-lg cursor-default hover:bg-white/[0.04]"
+          onClick={() => onToggle(sec.id)}
+        >
+          <ChevronRight size={12} className={`text-gray-600 flex-shrink-0 transition-transform ${open ? 'rotate-90' : ''}`} />
+          {sec.icon}
+          <span className="flex-1 min-w-0 truncate text-[12.5px] font-medium text-gray-300">{sec.title}</span>
+          <span className="text-2xs text-gray-600 tabular-nums pr-1.5">{sec.hosts.length}</span>
+        </div>
+        {open && sec.hosts.map((h) => renderHost(h, 1, sec.id))}
+      </div>
+    );
+  };
+
   return (
     <div className="space-y-px">
+      {!rootId && sections.filter((sec) => sec.hosts.length > 0).map(renderSection)}
+      {!rootId && sections.some((sec) => sec.hosts.length > 0) && <div className="h-px bg-white/[0.05] mx-2 my-1.5" />}
       {topFolders.map((n) => renderFolder(n, 0))}
       {topHosts.map((h) => renderHost(h, 0))}
       {/* drop zone: move to the top level */}

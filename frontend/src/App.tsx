@@ -3,7 +3,11 @@ import { Cable, Circle, Columns2, Copy, EyeOff, LayoutGrid, ScrollText, FolderPl
 import { Sidebar, MAX_WIDTH, MIN_WIDTH } from './components/sidebar/Sidebar';
 import { ImportDialog } from './components/sidebar/ImportDialog';
 import { useHostLibrary } from './components/sidebar/useHostLibrary';
-import { folderPath, streamDetail } from './components/sidebar/tree';
+import { folderPath, recentHosts, streamDetail } from './components/sidebar/tree';
+import type { HostItem } from './components/sidebar/tree';
+import { BulkEditDialog } from './components/sidebar/BulkEditDialog';
+import { InventoriesDialog } from './components/sidebar/InventoriesDialog';
+import { gridLayout } from './lib/layout';
 import { rdpForSave, sshForSave, streamForSave } from './lib/profiles';
 import { pruneRecordings } from './lib/recordingCleanup';
 import { TitleBar } from './components/layout/TitleBar';
@@ -24,7 +28,7 @@ import type { StreamDialogState } from './components/terminal/StreamDialog';
 import { ContainersDialog } from './components/terminal/ContainersDialog';
 import { InstallKeyDialog } from './components/terminal/InstallKeyDialog';
 import { setInitialInput } from './lib/initialInput';
-import { SaveStreamProfile, StreamConnect } from '../wailsjs/go/main/App';
+import { SaveStreamProfile, StreamConnect, TouchHost } from '../wailsjs/go/main/App';
 import { connection } from '../wailsjs/go/models';
 import { RecordingsDialog } from './components/recordings/RecordingsDialog';
 import type { PaneDrag } from './lib/paneDrag';
@@ -41,7 +45,7 @@ import { useHotkeys } from './hooks/useHotkeys';
 import { ConnectCancelled, ConnectNeedsUser, connectWithPrompts } from './lib/connect';
 import { identityById, reloadIdentities, saveIdentity } from './lib/identities';
 import { deleteWorkspace, instantiate, loadLastSession, loadWorkspaces, prune, rememberSession, saveWorkspace, snapshot, useWorkspaces } from './lib/workspaces';
-import type { Workspace } from './lib/workspaces';
+import type { Workspace, WorkspacePane } from './lib/workspaces';
 import { LockScreen } from './components/security/LockScreen';
 import { lockNow, useAppLock } from './lib/appLock';
 import { setClipboardNotifier } from './lib/clipboard';
@@ -99,6 +103,8 @@ function App() {
   const broadcast = useBroadcast();
   const [settingsOpen, setSettingsOpen] = useState<SettingsSection | null>(null);
   const [sidebar, setSidebar] = useState<SidebarPref>(readSidebarPref);
+  const [bulkHosts, setBulkHosts] = useState<HostItem[] | null>(null);
+  const [inventoriesOpen, setInventoriesOpen] = useState(false);
   const library = useHostLibrary({
     connectSSH: (p) => handleProfileConnect(p),
     editSSH: (p) => openConnectDialog(null, p),
@@ -109,7 +115,25 @@ function App() {
     connectStream: (p) => openStream(p),
     editStream: (p) => setStreamDialog({ kind: p.kind, profile: p }),
     newStream: (folderId) => setStreamDialog({ kind: 'telnet', profile: { folderId } }),
+    openMany: (list, split) => openMany(list, split),
+    bulkEdit: (list) => setBulkHosts(list),
+    openInventories: () => setInventoriesOpen(true),
   });
+
+  const notesOf = (kind: string, id: string | undefined) => {
+    const m = id ? library.meta.get(`${kind}:${id}`) : undefined;
+    return { tags: m?.tags ?? [], notes: m?.notes ?? '' };
+  };
+
+  /** Remembers that a saved host was opened, for the Recent list. */
+  const touchHost = (kind: 'ssh' | 'rdp' | 'stream', id: string | undefined) => {
+    if (!id) return;
+    const saved =
+      kind === 'ssh' ? library.ssh.some((p) => p.id === id) : kind === 'rdp' ? library.rdp.some((p) => p.id === id) : library.streams.some((p) => p.id === id);
+    if (!saved) return;
+    library.touched(kind, id);
+    TouchHost(kind, id).catch(() => {});
+  };
   const sshProfiles = library.ssh;
   const rdpProfiles = library.rdp;
   const streamProfiles = library.streams;
@@ -292,6 +316,7 @@ function App() {
         }
       }
       patchTab(tabId, { status: 'connected', started: true, profile: tabProfile });
+      touchHost('ssh', profile.id);
       return true;
     } catch (err) {
       setTabs((prev) =>
@@ -431,6 +456,29 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [layoutKey, restoreOn, savedIds]);
 
+  /** Opens hosts from the sidebar: a tab each, or panes of one tab (up to 9 per tab). */
+  const openMany = (list: HostItem[], split: boolean) => {
+    const builtin = getSettings().rdp.builtin;
+    for (const h of list) if (h.kind === 'rdp' && !builtin) void handleConnectRDP(h.profile);
+    const usable = list.filter((h) => h.kind !== 'rdp' || builtin);
+    if (usable.length === 0) return;
+    const panes: Record<string, WorkspacePane> = {};
+    const ids = usable.map((h, i) => {
+      panes[`p${i}`] = { kind: h.kind, profileId: h.id };
+      return `p${i}`;
+    });
+    const groups: Workspace['groups'] = [];
+    if (split) {
+      for (let i = 0; i < ids.length; i += 9) {
+        const chunk = ids.slice(i, i + 9);
+        groups.push({ root: gridLayout(chunk), focus: chunk[0] });
+      }
+    } else {
+      for (const id of ids) groups.push({ root: { kind: 'pane', id }, focus: id });
+    }
+    void openWorkspace({ id: '', name: 'Hosts', groups, panes, active: groups.length - 1 });
+  };
+
   const saveAsWorkspace = async (groupIds?: string[]) => {
     const g = groupIds ? groups.find((x) => x.id === groupIds[0]) : undefined;
     const first = tabs.find((t) => t.id === (g?.focus ?? activeTabId));
@@ -531,6 +579,7 @@ function App() {
       // spec.id is the saved profile's; the connection is keyed by the tab.
       await StreamConnect(connection.StreamRequest.createFrom({ ...spec, id: tabId }));
       patchTab(tabId, { status: 'connected', started: true });
+      touchHost('stream', spec.id);
       return true;
     } catch (err) {
       setTabs((prev) => prev.map((t) => (t.id === tabId ? { ...t, status: t.started ? 'disconnected' : 'idle' } : t)));
@@ -707,6 +756,7 @@ function App() {
     if (external || !getSettings().rdp.builtin) {
       try {
         await LaunchRDP(profile.id);
+        touchHost('rdp', profile.id);
       } catch (err) {
         dialogs.toast(`Failed to launch RDP: ${errorText(err)}`, 'error');
       }
@@ -722,6 +772,7 @@ function App() {
     try {
       const session = await openRdpSession(tabId, profile, dialogs, password);
       patchTab(tabId, { started: true, rdpSession: session });
+      touchHost('rdp', profile.id);
     } catch (err) {
       setTabs((prev) => prev.map((t) => (t.id === tabId ? { ...t, status: t.started ? 'disconnected' : 'idle' } : t)));
       if (!(err instanceof ConnectCancelled)) dialogs.toast(`Could not connect to ${profile.host}: ${errorText(err)}`, 'error');
@@ -835,13 +886,28 @@ function App() {
       : {}),
   }, !lock.locked);
 
+  const tagWords = (kind: string, id: string) => {
+    const m = library.meta.get(`${kind}:${id}`);
+    return m ? `${m.tags.map((t) => `#${t}`).join(' ')} ${m.notes}` : '';
+  };
+  const recent = recentHosts(library.hosts, Math.max(5, getSettings().hosts.recentCount));
   const paletteItems: PaletteItem[] = [
+    ...recent.map<PaletteItem>((h) => ({
+      id: `recent:${h.kind}:${h.id}`,
+      group: 'Recent',
+      label: h.name,
+      hint: h.detail,
+      icon: <RotateCw size={14} />,
+      emptyOnly: true,
+      run: () => library.actions.openHost(h),
+    })),
     ...sshProfiles.map<PaletteItem>((p) => ({
       id: `host:${p.id}`,
       group: 'Hosts',
       label: p.name,
       hint: [...folderPath(library.tree, p.folderId ?? ''), `${p.username}@${p.host}${p.port !== 22 ? ':' + p.port : ''}`].join(' / '),
       icon: <Server size={14} />,
+      keywords: tagWords('ssh', p.id),
       run: () => handleProfileConnect(p),
     })),
     ...rdpProfiles.map<PaletteItem>((p) => ({
@@ -850,6 +916,7 @@ function App() {
       label: p.name,
       hint: `RDP · ${p.host}`,
       icon: <Monitor size={14} />,
+      keywords: tagWords('rdp', p.id),
       run: () => handleConnectRDP(p),
     })),
     ...streamProfiles.map<PaletteItem>((p) => ({
@@ -858,7 +925,7 @@ function App() {
       label: p.name,
       hint: [...folderPath(library.tree, p.folderId ?? ''), streamDetail(p)].join(' / '),
       icon: p.kind === 'serial' ? <Cable size={14} /> : <Network size={14} />,
-      keywords: p.kind === 'serial' ? 'serial com console' : 'telnet',
+      keywords: `${p.kind === 'serial' ? 'serial com console' : 'telnet'} ${tagWords('stream', p.id)}`,
       run: () => openStream(p),
     })),
     ...tabs.map<PaletteItem>((t) => ({
@@ -966,6 +1033,7 @@ function App() {
           sshProfiles={sshProfiles}
           rdpProfiles={rdpProfiles}
           streamProfiles={streamProfiles}
+          meta={library.meta}
           connectedIds={connectedProfileIds}
           renamingId={library.renamingId}
           onRenameDone={() => library.setRenamingId(null)}
@@ -985,6 +1053,8 @@ function App() {
                 <Welcome
                   platform={platform}
                   profiles={sshProfiles}
+                  recent={recentHosts(library.hosts, 6)}
+                  onOpenHost={library.actions.openHost}
                   onConnect={handleProfileConnect}
                   onQuickConnect={quickConnect}
                   onNew={() => openConnectDialog(null)}
@@ -1105,6 +1175,8 @@ function App() {
           key={connectDialog.key}
           initial={connectDialog.initial}
           folders={library.folderChoices}
+          notes={notesOf('ssh', connectDialog.initial?.id)}
+          onSaveNotes={(id, v) => void library.saveMeta('ssh', id, v)}
           onClose={() => setConnectDialog(null)}
           onConnect={handleDialogConnect}
           onSwitchToRdp={
@@ -1119,6 +1191,26 @@ function App() {
         />
       )}
 
+      {bulkHosts && (
+        <BulkEditDialog
+          hosts={bulkHosts}
+          folders={library.folderChoices}
+          sshProfiles={sshProfiles}
+          onClose={() => setBulkHosts(null)}
+          onDone={() => {
+            setBulkHosts(null);
+            void loadProfiles();
+          }}
+        />
+      )}
+
+      {inventoriesOpen && (
+        <InventoriesDialog
+          onClose={() => setInventoriesOpen(false)}
+          onSynced={() => void loadProfiles()}
+        />
+      )}
+
       {streamDialog && (
         <StreamDialog
           key={streamDialog.profile?.id ?? streamDialog.kind}
@@ -1130,6 +1222,8 @@ function App() {
             openStream(spec);
           }}
           onSave={(p, connect) => void saveStream(p, connect)}
+          notes={notesOf('stream', streamDialog.profile?.id)}
+          onSaveNotes={(id, v) => void library.saveMeta('stream', id, v)}
         />
       )}
 
@@ -1181,6 +1275,8 @@ function App() {
           initial={rdpDialog.initial}
           onClose={() => setRdpDialog(null)}
           onSave={handleSaveRDP}
+          notes={notesOf('rdp', rdpDialog.initial?.id)}
+          onSaveNotes={(id, v) => void library.saveMeta('rdp', id, v)}
           onSwitchToSsh={({ host, folderId }) => {
             modalSwap.pending = true;
             setRdpDialog(null);

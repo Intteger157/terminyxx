@@ -11,8 +11,8 @@ import {printing} from '../models';
 import {rdp} from '../models';
 import {recording} from '../models';
 import {rdpgw} from '../models';
-import {pasteboard} from '../models';
 import {main} from '../models';
+import {pasteboard} from '../models';
 
 export function AppVersion():Promise<string>;
 
@@ -24,6 +24,8 @@ export function DeleteFolder(arg1:string):Promise<void>;
 
 export function DeleteIdentity(arg1:string):Promise<void>;
 
+export function DeleteInventory(arg1:string):Promise<void>;
+
 export function DeleteRDPProfile(arg1:string):Promise<void>;
 
 export function DeleteRecording(arg1:string):Promise<void>;
@@ -33,6 +35,8 @@ export function DeleteSSHProfile(arg1:string):Promise<void>;
 export function DeleteSnippet(arg1:string):Promise<void>;
 
 export function DeleteStreamProfile(arg1:string):Promise<void>;
+
+export function ExportSSHConfig(arg1:Array<string>):Promise<string>;
 
 export function ExportSync(arg1:string,arg2:boolean):Promise<string>;
 
@@ -68,9 +72,13 @@ export function ListContainers(arg1:string,arg2:string):Promise<Array<connection
 
 export function ListFolders():Promise<Array<store.Folder>>;
 
+export function ListHostMeta():Promise<Array<store.HostMeta>>;
+
 export function ListIdentities():Promise<Array<store.Identity>>;
 
 export function ListImportSources():Promise<Array<importers.SourceInfo>>;
+
+export function ListInventories():Promise<Array<store.Inventory>>;
 
 export function ListLocalDir(arg1:string):Promise<Array<connection.FileEntry>>;
 
@@ -113,6 +121,8 @@ export function OpenRecordingsFolder():Promise<void>;
 export function OpenURL(arg1:string):Promise<void>;
 
 export function PickImportPaths(arg1:string):Promise<Array<string>>;
+
+export function PingHosts(arg1:Array<main.PingTarget>):Promise<Array<main.PingResult>>;
 
 export function PruneRecordings(arg1:number,arg2:number):Promise<number>;
 
@@ -188,7 +198,11 @@ export function SSHWriteInput(arg1:string,arg2:string):Promise<void>;
 
 export function SaveFolder(arg1:store.Folder):Promise<void>;
 
+export function SaveHostMeta(arg1:store.HostMeta):Promise<void>;
+
 export function SaveIdentity(arg1:store.Identity):Promise<void>;
+
+export function SaveInventory(arg1:store.Inventory):Promise<void>;
 
 export function SaveRDPProfile(arg1:rdp.RDPProfile):Promise<void>;
 
@@ -224,7 +238,11 @@ export function StopTunnel(arg1:string,arg2:string):Promise<void>;
 
 export function StreamConnect(arg1:connection.StreamRequest):Promise<void>;
 
+export function SyncInventory(arg1:string):Promise<store.InventorySync>;
+
 export function TestBiometrics():Promise<void>;
+
+export function TouchHost(arg1:string,arg2:string):Promise<void>;
 
 export function UnlockApp(arg1:string):Promise<void>;
 

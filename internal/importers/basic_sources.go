@@ -64,7 +64,7 @@ func readOpenSSH(paths []string) (Result, error) {
 		if u == "" {
 			u = def
 		}
-		host := Host{Name: h.Alias, Kind: "ssh", Host: h.HostName, Port: h.Port, User: u, KeyFile: h.IdentityFile}
+		host := Host{Name: h.Alias, Kind: "ssh", Host: h.HostName, Port: h.Port, User: u, KeyFile: h.IdentityFile, ProxyCommand: h.ProxyCommand, X11: h.ForwardX11}
 		if h.ProxyJump != "" {
 			host.Jump = parseHops(h.ProxyJump)
 			if host.Jump == nil {

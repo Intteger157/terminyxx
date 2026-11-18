@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Folder, Layers, RefreshCw, TriangleAlert } from 'lucide-react';
+import { HostNotesFields, sameNotes } from '../sidebar/HostNotesFields';
+import type { NotesValue } from '../sidebar/HostNotesFields';
 import { Modal } from '../ui/Dialogs';
 import { Select } from '../ui/Select';
 import { Field } from './ConnectDialog';
@@ -31,10 +33,14 @@ interface Props {
   onConnect: (spec: StreamSpec) => void;
   /** Save to the host list, then connect if asked. */
   onSave: (p: StreamProfile, connect: boolean) => void;
+  notes?: NotesValue;
+  onSaveNotes?: (id: string, v: NotesValue) => void;
 }
 
 /** Telnet and serial connections: a quick connection, or one saved in the host list. */
-export function StreamDialog({ initial, folders, onClose, onConnect, onSave }: Props) {
+export function StreamDialog({ initial, folders, onClose, onConnect, onSave, notes: initialNotes, onSaveNotes }: Props) {
+  const startNotes: NotesValue = initialNotes ?? { tags: [], notes: '' };
+  const [notes, setNotes] = useState<NotesValue>(startNotes);
   const editing = !!initial.profile?.id;
   // A saved profile's values win; a quick connection starts from the last one.
   const last: Partial<StreamSpec> = initial.profile ? initial.profile : remembered();
@@ -84,7 +90,9 @@ export function StreamDialog({ initial, folders, onClose, onConnect, onSave }: P
       onConnect(s);
       return;
     }
-    onSave({ ...s, id: initial.profile?.id ?? crypto.randomUUID(), name: name.trim() || defaultName, folderId, sortOrder: initial.profile?.sortOrder ?? 0 }, connect);
+    const id = initial.profile?.id ?? crypto.randomUUID();
+    if (onSaveNotes && !sameNotes(notes, startNotes)) onSaveNotes(id, notes);
+    onSave({ ...s, id, name: name.trim() || defaultName, folderId, sortOrder: initial.profile?.sortOrder ?? 0 }, connect);
   };
 
   const num = (v: string | number) => Number(v);
@@ -183,6 +191,8 @@ export function StreamDialog({ initial, folders, onClose, onConnect, onSave }: P
             </Field>
           </div>
         )}
+
+        {save && <HostNotesFields value={notes} onChange={setNotes} />}
 
         <div className="flex justify-end gap-2 pt-1">
           <button type="button" className="btn-ghost h-8 px-3" onClick={onClose}>

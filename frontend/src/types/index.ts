@@ -37,6 +37,36 @@ export interface SSHProfile {
   identityId?: string;
   /** Per-host terminal settings. */
   options?: HostOptions;
+  /** How the TCP connection reaches the host (or its first jump host). */
+  proxy?: ProxySettings;
+  /** Forward X11 to the local X server (needs the global switch). */
+  x11Forwarding?: boolean;
+}
+
+export type ProxyType = '' | 'socks5' | 'http' | 'command';
+
+export interface ProxySettings {
+  type: ProxyType | string;
+  host: string;
+  port: number;
+  username: string;
+  /** Write-only, like SSHProfile.password. */
+  password: string;
+  hasPassword?: boolean;
+  clearPassword?: boolean;
+  /** ProxyCommand: %h, %p, %r are replaced. */
+  command: string;
+}
+
+/** Star, tags, notes and last use of any saved host. */
+export interface HostMeta {
+  kind: 'ssh' | 'rdp' | 'stream' | string;
+  id: string;
+  favorite: boolean;
+  tags: string[];
+  notes: string;
+  /** Unix ms of the last connect, 0 = never. */
+  lastUsed: number;
 }
 
 export interface HostOptions {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"golang.org/x/text/encoding"
 	"io"
+	"log"
 	"net"
 	"strconv"
 	"strings"
@@ -52,6 +53,8 @@ type ManagedConnection struct {
 	mask func() MaskOptions
 	// agentConn serves forwarded agent requests; nil without forwarding.
 	agentConn io.Closer
+	// x11 relays forwarded X11 connections; nil without forwarding.
+	x11 *x11Forwarder
 
 	tunnelSet *tunnelSet
 
@@ -142,8 +145,13 @@ func dialHop(req ConnectRequest, via *ssh.Client, hostKeys *HostKeyStore, policy
 		// Not ssh.Dial: its Timeout only covers the TCP connect, so a server
 		// that never answers the handshake would hang the connect forever.
 		var conn net.Conn
-		if conn, err = net.DialTimeout("tcp", addr, dialTimeout); err == nil {
+		if conn, err = dialDirect(req.Host, port, req.Username, req.Proxy); err == nil {
 			client, err = handshake(conn, addr, config)
+			if cc, ok := conn.(*cmdConn); ok && err != nil && !strings.Contains(err.Error(), "ProxyCommand") {
+				if msg := cc.stderr.String(); msg != "" {
+					err = fmt.Errorf("%w (ProxyCommand: %s)", err, msg)
+				}
+			}
 		}
 	} else {
 		client, err = dialThrough(via, addr, config)
@@ -228,6 +236,13 @@ func newManagedConnection(req ConnectRequest, m *ConnectionManager) (*ManagedCon
 			}
 		}
 	}
+	if req.X11 && policy.AllowX11 {
+		if f, err := startX11(client, policy.X11Display); err == nil {
+			c.x11 = f
+		} else {
+			log.Printf("x11: %v", err)
+		}
+	}
 	go c.keepalive()
 	return c, nil
 }
@@ -306,7 +321,7 @@ func (c *ManagedConnection) StartShell(cols, rows int) error {
 	}
 	c.noteSize(cols, rows)
 	client := c.client
-	opts := ptyOptions{gate: c.gate, mask: c.mask, forwardAgent: c.agentConn != nil, recorder: c.rec.Load, charset: c.charset}
+	opts := ptyOptions{gate: c.gate, mask: c.mask, forwardAgent: c.agentConn != nil, x11: c.x11, recorder: c.rec.Load, charset: c.charset}
 	pty, err := NewPTYSession(client, c.emitter, c.ID, cols, rows, opts, func(err error) {
 		// Shell exited (e.g. `exit`): drop the whole connection.
 		var exitErr *ssh.ExitError

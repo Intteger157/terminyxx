@@ -47,6 +47,28 @@ type SSHProfile struct {
 	IdentityID string `json:"identityId"`
 	// Options are per-host terminal settings (JSON column, migration v10).
 	Options HostOptions `json:"options"`
+	// Proxy is how the TCP connection reaches the host (or its first jump
+	// host): directly, through a SOCKS5 / HTTP CONNECT proxy or a local
+	// command (ProxyCommand). JSON column, migration v12.
+	Proxy ProxySettings `json:"proxy"`
+	// X11Forwarding forwards X11 from the server to the local X server.
+	X11Forwarding bool `json:"x11Forwarding"`
+}
+
+// ProxySettings is the proxy of one SSH host. The proxy password is kept in
+// the keychain ("proxy:<host id>"), never here.
+type ProxySettings struct {
+	Type     string `json:"type"` // "" | "socks5" | "http" | "command"
+	Host     string `json:"host"`
+	Port     int    `json:"port"`
+	Username string `json:"username"`
+	// Password is write-only like SSHProfile.Password.
+	Password      string `json:"password"`
+	HasPassword   bool   `json:"hasPassword"`
+	ClearPassword bool   `json:"clearPassword"`
+	// Command is run through the shell with %h, %p, %r and %% replaced; its
+	// stdin and stdout carry the SSH connection.
+	Command string `json:"command"`
 }
 
 // HostOptions override app settings for one SSH host.
@@ -253,6 +275,36 @@ CREATE TABLE stream_profiles (
     folder_id TEXT NOT NULL DEFAULT '',
     sort_order INTEGER NOT NULL DEFAULT 0
 );`,
+	// v12: favorites, tags, notes and last use per host; proxies and X11
+	// forwarding for SSH hosts; cloud inventories.
+	`
+CREATE TABLE host_meta (
+    kind TEXT NOT NULL,
+    id TEXT NOT NULL,
+    favorite INTEGER NOT NULL DEFAULT 0,
+    tags TEXT NOT NULL DEFAULT '',
+    notes TEXT NOT NULL DEFAULT '',
+    last_used INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (kind, id)
+);
+ALTER TABLE ssh_profiles ADD COLUMN proxy TEXT NOT NULL DEFAULT '';
+ALTER TABLE ssh_profiles ADD COLUMN x11_forwarding INTEGER NOT NULL DEFAULT 0;
+CREATE TABLE inventories (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    config TEXT NOT NULL DEFAULT '',
+    folder_id TEXT NOT NULL DEFAULT '',
+    last_sync INTEGER NOT NULL DEFAULT 0,
+    sort_order INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE inventory_hosts (
+    inventory_id TEXT NOT NULL,
+    external_id TEXT NOT NULL,
+    host_kind TEXT NOT NULL,
+    host_id TEXT NOT NULL,
+    PRIMARY KEY (inventory_id, external_id)
+);`,
 }
 
 func (s *Store) migrate() error {
@@ -310,15 +362,19 @@ func (s *Store) moveLegacyPasswords() {
 
 // --- SSH profiles ---
 
-const sshColumns = `id, name, host, port, username, auth_type, password, key_path, folder_id, sort_order, allow_legacy_algorithms, agent_forwarding, jump_profile_id, tunnels, sftp_only, identity_id, options`
+const sshColumns = `id, name, host, port, username, auth_type, password, key_path, folder_id, sort_order, allow_legacy_algorithms, agent_forwarding, jump_profile_id, tunnels, sftp_only, identity_id, options, proxy, x11_forwarding`
 
 func scanSSH(row interface{ Scan(...any) error }) (SSHProfile, string, error) {
 	var p SSHProfile
 	var dbPassword string
-	var legacy, agentFwd, sftpOnly int
-	var tunnels, options string
-	err := row.Scan(&p.ID, &p.Name, &p.Host, &p.Port, &p.Username, &p.AuthType, &dbPassword, &p.KeyPath, &p.FolderID, &p.SortOrder, &legacy, &agentFwd, &p.JumpProfileID, &tunnels, &sftpOnly, &p.IdentityID, &options)
+	var legacy, agentFwd, sftpOnly, x11 int
+	var tunnels, options, proxy string
+	err := row.Scan(&p.ID, &p.Name, &p.Host, &p.Port, &p.Username, &p.AuthType, &dbPassword, &p.KeyPath, &p.FolderID, &p.SortOrder, &legacy, &agentFwd, &p.JumpProfileID, &tunnels, &sftpOnly, &p.IdentityID, &options, &proxy, &x11)
 	p.SFTPOnly = sftpOnly == 1
+	p.X11Forwarding = x11 == 1
+	if proxy != "" {
+		_ = json.Unmarshal([]byte(proxy), &p.Proxy)
+	}
 	if options != "" {
 		_ = json.Unmarshal([]byte(options), &p.Options)
 	}
@@ -352,6 +408,7 @@ func (s *Store) ListSSHProfiles() ([]SSHProfile, error) {
 			return nil, err
 		}
 		p.HasPassword = dbPassword != "" || s.hasSecret(p.ID)
+		p.Proxy.HasPassword = p.Proxy.Type != "" && s.hasSecretKey(proxySecretKey(p.ID))
 		profiles = append(profiles, p)
 	}
 	if err := rows.Err(); err != nil {
@@ -388,6 +445,7 @@ func (s *Store) SecretKeys() ([]string, error) {
 		{`SELECT id FROM ssh_profiles`, "ssh:"},
 		{`SELECT id FROM rdp_profiles`, "rdp:"},
 		{`SELECT id FROM identities`, "ident:"},
+		{`SELECT id FROM ssh_profiles WHERE proxy != ''`, "proxy:"},
 	} {
 		rows, err := s.db.Query(q.sql)
 		if err != nil {
@@ -476,13 +534,33 @@ func (s *Store) SaveSSHProfile(p SSHProfile) error {
 	if err != nil {
 		return err
 	}
+	switch {
+	case p.Proxy.Password != "":
+		if err := s.storeSecret(proxySecretKey(p.ID), p.Proxy.Password); err != nil {
+			return err
+		}
+	case p.Proxy.ClearPassword || p.Proxy.Type == "" || p.Proxy.Type == "command":
+		if s.secrets != nil {
+			_ = s.secrets.Delete(proxySecretKey(p.ID))
+		}
+	}
+	proxy := p.Proxy
+	proxy.Password, proxy.HasPassword, proxy.ClearPassword = "", false, false
+	proxyJSON := ""
+	if proxy.Type != "" {
+		b, err := json.Marshal(proxy)
+		if err != nil {
+			return err
+		}
+		proxyJSON = string(b)
+	}
 
 	if exists {
 		_, err = s.db.Exec(`
 UPDATE ssh_profiles SET name=?, host=?, port=?, username=?, auth_type=?, key_path=?, folder_id=?,
-    allow_legacy_algorithms=?, agent_forwarding=?, jump_profile_id=?, tunnels=?, sftp_only=?, identity_id=?, options=?
+    allow_legacy_algorithms=?, agent_forwarding=?, jump_profile_id=?, tunnels=?, sftp_only=?, identity_id=?, options=?, proxy=?, x11_forwarding=?
 WHERE id=?`, p.Name, p.Host, p.Port, p.Username, p.AuthType, p.KeyPath, p.FolderID,
-			boolInt(p.AllowLegacyAlgorithms), boolInt(p.AgentForwarding), p.JumpProfileID, string(tunnelsJSON), boolInt(p.SFTPOnly), p.IdentityID, string(optionsJSON), p.ID)
+			boolInt(p.AllowLegacyAlgorithms), boolInt(p.AgentForwarding), p.JumpProfileID, string(tunnelsJSON), boolInt(p.SFTPOnly), p.IdentityID, string(optionsJSON), proxyJSON, boolInt(p.X11Forwarding), p.ID)
 		if err != nil {
 			return err
 		}
@@ -496,9 +574,9 @@ WHERE id=?`, p.Name, p.Host, p.Port, p.Username, p.AuthType, p.KeyPath, p.Folder
 		return err
 	}
 
-	_, err = s.db.Exec(`INSERT INTO ssh_profiles (`+sshColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	_, err = s.db.Exec(`INSERT INTO ssh_profiles (`+sshColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		p.ID, p.Name, p.Host, p.Port, p.Username, p.AuthType, dbPassword, p.KeyPath, p.FolderID, sortOrder,
-		boolInt(p.AllowLegacyAlgorithms), boolInt(p.AgentForwarding), p.JumpProfileID, string(tunnelsJSON), boolInt(p.SFTPOnly), p.IdentityID, string(optionsJSON))
+		boolInt(p.AllowLegacyAlgorithms), boolInt(p.AgentForwarding), p.JumpProfileID, string(tunnelsJSON), boolInt(p.SFTPOnly), p.IdentityID, string(optionsJSON), proxyJSON, boolInt(p.X11Forwarding))
 	return err
 }
 
@@ -525,6 +603,10 @@ func (s *Store) deleteSecret(id string) {
 
 func (s *Store) DeleteSSHProfile(id string) error {
 	s.deleteSecret(id)
+	if s.secrets != nil {
+		_ = s.secrets.Delete(proxySecretKey(id))
+	}
+	s.deleteMeta(KindSSH, id)
 	_, err := s.db.Exec(`DELETE FROM ssh_profiles WHERE id = ?`, id)
 	return err
 }
@@ -535,6 +617,7 @@ func (s *Store) GetSSHProfile(id string) (SSHProfile, error) {
 		return p, fmt.Errorf("get ssh profile: %w", err)
 	}
 	p.HasPassword = dbPassword != "" || s.hasSecret(p.ID)
+	p.Proxy.HasPassword = p.Proxy.Type != "" && s.hasSecretKey(proxySecretKey(p.ID))
 	s.applyIdentity(&p)
 	return p, nil
 }
@@ -659,6 +742,7 @@ func (s *Store) DeleteRDPProfile(id string) error {
 	if s.secrets != nil {
 		_ = s.secrets.Delete(rdpSecretKey(id))
 	}
+	s.deleteMeta(KindRDP, id)
 	_, err := s.db.Exec(`DELETE FROM rdp_profiles WHERE id = ?`, id)
 	return err
 }

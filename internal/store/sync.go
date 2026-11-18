@@ -22,6 +22,8 @@ type Bundle struct {
 	Identities []Identity `json:"identities,omitempty"`
 	// Streams (Telnet and serial connections) came later too.
 	Streams []StreamProfile `json:"streams,omitempty"`
+	// Meta (favorites, tags, notes) came later too.
+	Meta []HostMeta `json:"meta,omitempty"`
 }
 
 // ImportResult counts what an import added or replaced.
@@ -71,7 +73,11 @@ func (s *Store) ExportBundle(includePasswords bool) (Bundle, error) {
 				return b, err
 			}
 			p.Password = pw
+			if p.Proxy.HasPassword {
+				p.Proxy.Password, _ = s.ProxyPassword(p.ID)
+			}
 		}
+		p.Proxy.HasPassword, p.Proxy.ClearPassword = false, false
 		b.SSH = append(b.SSH, p)
 	}
 	list, err := s.ListRDPProfiles()
@@ -93,6 +99,9 @@ func (s *Store) ExportBundle(includePasswords bool) (Bundle, error) {
 		return b, err
 	}
 	if b.Streams, err = s.ListStreamProfiles(); err != nil {
+		return b, err
+	}
+	if b.Meta, err = s.ListHostMeta(); err != nil {
 		return b, err
 	}
 	return b, nil
@@ -182,6 +191,11 @@ func (s *Store) ImportBundle(b Bundle) (ImportResult, error) {
 		}
 		res.Hosts++
 	}
+	for _, m := range b.Meta {
+		if err := s.importMeta(m); err != nil {
+			return res, err
+		}
+	}
 	for _, sn := range b.Snippets {
 		if err := s.SaveSnippet(sn); err != nil {
 			return res, err
@@ -193,7 +207,8 @@ func (s *Store) ImportBundle(b Bundle) (ImportResult, error) {
 
 // resetRiskyFlags turns off settings from a sync file that act on their own
 // once the host is used: agent forwarding (lets the server use local keys),
-// tunnels that start automatically and commands typed after login. A setting the user already had on
+// tunnels that start automatically, commands typed after login, a
+// ProxyCommand and X11 forwarding. A setting the user already had on
 // for the same local host (and the same tunnel) is kept. It reports whether
 // anything was turned off.
 func resetRiskyFlags(p *SSHProfile, local *SSHProfile) bool {
@@ -204,6 +219,15 @@ func resetRiskyFlags(p *SSHProfile, local *SSHProfile) bool {
 	}
 	if p.Options.StartupCommands != "" && (local == nil || local.Options.StartupCommands != p.Options.StartupCommands) {
 		p.Options.StartupCommands = ""
+		changed = true
+	}
+	// A ProxyCommand runs a local program on every connect.
+	if p.Proxy.Type == "command" && (local == nil || local.Proxy.Type != "command" || local.Proxy.Command != p.Proxy.Command) {
+		p.Proxy = ProxySettings{}
+		changed = true
+	}
+	if p.X11Forwarding && (local == nil || !local.X11Forwarding) {
+		p.X11Forwarding = false
 		changed = true
 	}
 	for i := range p.Tunnels {

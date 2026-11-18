@@ -20,6 +20,8 @@ type Host struct {
 	Port         int    `json:"port"`
 	IdentityFile string `json:"identityFile"`
 	ProxyJump    string `json:"proxyJump"`
+	ProxyCommand string `json:"proxyCommand"`
+	ForwardX11   bool   `json:"forwardX11"`
 }
 
 type block struct {
@@ -173,6 +175,11 @@ func resolve(blocks []block) []Host {
 				Port:         22,
 				IdentityFile: expandHome(eff["identityfile"]),
 				ProxyJump:    eff["proxyjump"],
+				ProxyCommand: eff["proxycommand"],
+				ForwardX11:   strings.EqualFold(eff["forwardx11"], "yes"),
+			}
+			if strings.EqualFold(h.ProxyCommand, "none") {
+				h.ProxyCommand = ""
 			}
 			if h.HostName == "" {
 				h.HostName = alias

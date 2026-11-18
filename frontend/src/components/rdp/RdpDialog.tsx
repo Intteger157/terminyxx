@@ -5,6 +5,8 @@ import { Field, ProtocolSwitch, Toggle } from '../terminal/ConnectDialog';
 import { DEFAULT_RDP_OPTIONS } from '../../lib/profiles';
 import { SelectFolder } from '../../../wailsjs/go/main/App';
 import { useSettings } from '../../lib/settings';
+import { HostNotesFields, sameNotes } from '../sidebar/HostNotesFields';
+import type { NotesValue } from '../sidebar/HostNotesFields';
 
 interface RdpDialogProps {
   initial?: Partial<RDPProfile>;
@@ -12,6 +14,8 @@ interface RdpDialogProps {
   onSave: (profile: RDPProfile) => void;
   /** Shown for a brand-new host: switches to the SSH dialog, carrying over what was typed. */
   onSwitchToSsh?: (carry: { host: string; folderId: string }) => void;
+  notes?: NotesValue;
+  onSaveNotes?: (id: string, v: NotesValue) => void;
 }
 
 const RESOLUTIONS: [number, number][] = [
@@ -38,7 +42,9 @@ const PRINTER_DRIVERS: { id: string; label: string; hint: string }[] = [
 
 const isMac = typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform);
 
-export function RdpDialog({ initial, onClose, onSave, onSwitchToSsh }: RdpDialogProps) {
+export function RdpDialog({ initial, onClose, onSave, onSwitchToSsh, notes: initialNotes, onSaveNotes }: RdpDialogProps) {
+  const startNotes: NotesValue = initialNotes ?? { tags: [], notes: '' };
+  const [notes, setNotes] = useState<NotesValue>(startNotes);
   const [name, setName] = useState(initial?.name ?? '');
   const [host, setHost] = useState(initial?.host ?? '');
   const [port, setPort] = useState(initial?.port ?? 3389);
@@ -69,8 +75,10 @@ export function RdpDialog({ initial, onClose, onSave, onSwitchToSsh }: RdpDialog
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    const id = initial?.id ?? crypto.randomUUID();
+    if (onSaveNotes && !sameNotes(notes, startNotes)) onSaveNotes(id, notes);
     onSave({
-      id: initial?.id ?? crypto.randomUUID(),
+      id,
       name: name.trim() || host.trim(),
       host: host.trim(),
       port: Number(port) || 3389,
@@ -258,6 +266,8 @@ export function RdpDialog({ initial, onClose, onSave, onSwitchToSsh }: RdpDialog
             <input className="input-field font-mono" value={opts.gateway} onChange={(e) => set('gateway', e.target.value)} spellCheck={false} />
           </Field>
         )}
+
+        <HostNotesFields value={notes} onChange={setNotes} />
 
         <div className="flex justify-end gap-2 pt-1">
           <button type="button" className="btn-ghost h-8 px-3" onClick={onClose}>

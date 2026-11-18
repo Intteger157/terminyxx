@@ -54,6 +54,14 @@ export interface AppSettings {
     /** Reopen the tabs and split layout of the last run at startup. */
     restore: boolean;
   };
+  hosts: {
+    /** Show a green/red dot for hosts whose port answers (a TCP connect, nothing sent). */
+    availability: boolean;
+    /** Seconds between checks. */
+    availabilitySeconds: AvailabilitySeconds;
+    /** How many hosts the Recent list shows (0 hides it). */
+    recentCount: number;
+  };
   recordings: {
     /** Delete finished recordings older than this many days; 0 = keep. */
     keepDays: RecordingKeepDays;
@@ -97,11 +105,18 @@ export interface AppSettings {
       agent: AgentSource;
       /** Socket or named pipe for agent 'custom'. */
       agentPath: string;
+      /** Global switch for X11 forwarding; hosts opt in. */
+      allowX11Forwarding: boolean;
+      /** Local X server, e.g. localhost:0.0 ('' = $DISPLAY or localhost:0.0). */
+      x11Display: string;
     };
     /** What remote programs may do with the clipboard through OSC 52. */
     osc52: Osc52Policy;
   };
 }
+
+export const AVAILABILITY_OPTIONS = [30, 60, 300] as const;
+export type AvailabilitySeconds = (typeof AVAILABILITY_OPTIONS)[number];
 
 export const RECORDING_KEEP_OPTIONS = [0, 7, 30, 90, 365] as const;
 export type RecordingKeepDays = (typeof RECORDING_KEEP_OPTIONS)[number];
@@ -216,6 +231,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   updates: { autoCheck: true },
   rdp: { builtin: true },
   sessions: { autoReconnect: true, restore: false },
+  hosts: { availability: false, availabilitySeconds: 60, recentCount: 5 },
   recordings: { keepDays: 0, maxSizeMB: 0 },
   security: {
     hideFromCapture: true,
@@ -223,7 +239,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     clipboard: { autoClear: true, clearAfterSeconds: 30, scope: 'sensitive' },
     paste: { warnMultiline: true, warnDangerous: true },
     masking: { enabled: false, maskIPs: false },
-    ssh: { modernAlgorithmsOnly: true, allowAgentForwarding: false, agent: 'auto', agentPath: '' },
+    ssh: { modernAlgorithmsOnly: true, allowAgentForwarding: false, agent: 'auto', agentPath: '', allowX11Forwarding: false, x11Display: '' },
     osc52: 'prompt',
   },
 };
@@ -284,6 +300,11 @@ function normalize(raw: unknown): AppSettings {
       autoReconnect: (r.sessions?.autoReconnect ?? true) !== false,
       restore: !!r.sessions?.restore,
     },
+    hosts: {
+      availability: !!r.hosts?.availability,
+      availabilitySeconds: AVAILABILITY_OPTIONS.find((v) => v === r.hosts?.availabilitySeconds) ?? 60,
+      recentCount: Math.round(clamp(r.hosts?.recentCount, 0, 20, 5)),
+    },
     recordings: {
       keepDays: RECORDING_KEEP_OPTIONS.find((v) => v === r.recordings?.keepDays) ?? 0,
       maxSizeMB: RECORDING_SIZE_OPTIONS.find((v) => v === r.recordings?.maxSizeMB) ?? 0,
@@ -307,6 +328,8 @@ function normalize(raw: unknown): AppSettings {
         allowAgentForwarding: !!ssh.allowAgentForwarding,
         agent: AGENT_SOURCES.includes(ssh.agent) ? ssh.agent : 'auto',
         agentPath: typeof ssh.agentPath === 'string' ? ssh.agentPath.slice(0, 1024) : '',
+        allowX11Forwarding: !!ssh.allowX11Forwarding,
+        x11Display: typeof ssh.x11Display === 'string' ? ssh.x11Display.trim().slice(0, 256) : '',
       },
       osc52: (['disabled', 'prompt', 'write'] as const).includes(sec.osc52) ? sec.osc52 : ds.osc52,
     },

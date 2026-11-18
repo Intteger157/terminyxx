@@ -1,25 +1,31 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Cable,
+  Cloud,
+  Columns2,
   Copy,
+  FileDown,
   FolderPlus,
   Monitor,
   Pencil,
   Play,
   Plus,
   Server,
+  SlidersHorizontal,
+  Star,
+  Tag,
   Trash2,
   Upload,
   Zap,
 } from 'lucide-react';
 import type { ImportItem } from './ImportDialog';
-import type { Folder, RDPProfile, SSHProfile, StreamProfile } from '../../types';
+import type { Folder, HostMeta, RDPProfile, SSHProfile, StreamProfile } from '../../types';
 import { errorText, useDialogs } from '../ui/Dialogs';
 import { useContextMenu } from '../ui/ContextMenu';
 import type { MenuEntry } from '../ui/ContextMenu';
 import type { TreeActions } from './HostTree';
-import type { DragItem, FolderNode, HostItem } from './tree';
-import { FOLDER_COLORS, buildTree, folderOptions, hostItems, hostsUnder } from './tree';
+import type { DragItem, FolderNode, HostItem, MetaMap } from './tree';
+import { FOLDER_COLORS, buildTree, emptyMeta, folderOptions, hostItems, hostsUnder, metaKey } from './tree';
 import { rdpForSave, sshForSave, streamForSave } from '../../lib/profiles';
 import { planJumps } from '../../lib/importJumps';
 import { copyText } from '../../lib/clipboard';
@@ -29,12 +35,15 @@ import {
   DeleteRDPProfile,
   DeleteSSHProfile,
   DeleteStreamProfile,
+  ExportSSHConfig,
   ListFolders,
+  ListHostMeta,
   ListRDPProfiles,
   ListSSHProfiles,
   ListStreamProfiles,
   MoveItem,
   SaveFolder,
+  SaveHostMeta,
   SaveRDPProfile,
   SaveSSHProfile,
   SaveStreamProfile,
@@ -51,6 +60,12 @@ interface Options {
   connectStream: (p: StreamProfile) => void;
   editStream: (p: StreamProfile) => void;
   newStream: (folderId: string) => void;
+  /** Opens several hosts: each in its own tab, or all as panes of one tab. */
+  openMany: (hosts: HostItem[], split: boolean) => void;
+  /** Opens the bulk editor for these hosts. */
+  bulkEdit: (hosts: HostItem[]) => void;
+  /** Opens the cloud inventory manager. */
+  openInventories: () => void;
 }
 
 /** Saved hosts, folders, and every sidebar action on them. */
@@ -61,6 +76,13 @@ export function useHostLibrary(opts: Options) {
   const [ssh, setSSH] = useState<SSHProfile[]>([]);
   const [rdp, setRDP] = useState<RDPProfile[]>([]);
   const [streams, setStreams] = useState<StreamProfile[]>([]);
+  const [meta, setMetaState] = useState<MetaMap>(new Map());
+  // The latest map, so saves read it without waiting for a render.
+  const metaRef = useRef<MetaMap>(meta);
+  const setMeta = useCallback((m: MetaMap) => {
+    metaRef.current = m;
+    setMetaState(m);
+  }, []);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   /** True once the hosts were read at least once (after unlocking). */
@@ -68,7 +90,8 @@ export function useHostLibrary(opts: Options) {
 
   const reload = useCallback(async () => {
     try {
-      const [f, s, r, st] = await Promise.all([ListFolders(), ListSSHProfiles(), ListRDPProfiles(), ListStreamProfiles()]);
+      const [f, s, r, st, m] = await Promise.all([ListFolders(), ListSSHProfiles(), ListRDPProfiles(), ListStreamProfiles(), ListHostMeta()]);
+      setMeta(new Map((m ?? []).map((x) => [metaKey(x.kind, x.id), x as HostMeta])));
       setFolders(f ?? []);
       setSSH(s ?? []);
       setRDP(r ?? []);
@@ -86,7 +109,121 @@ export function useHostLibrary(opts: Options) {
     if (ready && !locked) reload();
   }, [reload, locked, ready]);
 
-  const tree = useMemo(() => buildTree(folders, hostItems(ssh, rdp, streams)), [folders, ssh, rdp, streams]);
+  const hosts = useMemo(() => hostItems(ssh, rdp, streams, meta), [ssh, rdp, streams, meta]);
+  const tree = useMemo(() => buildTree(folders, hosts), [folders, hosts]);
+
+  /** Saves a host's star, tags or notes (and shows the change at once). */
+  const saveMeta = useCallback(
+    async (kind: string, id: string, patch: Partial<HostMeta>) => {
+      const key = metaKey(kind, id);
+      const next: HostMeta = { ...(metaRef.current.get(key) ?? emptyMeta(kind, id)), ...patch, kind, id };
+      setMeta(new Map(metaRef.current).set(key, next));
+      try {
+        await SaveHostMeta(next);
+      } catch (err) {
+        dialogs.toast(`Could not save: ${errorText(err)}`, 'error');
+      }
+    },
+    [dialogs, setMeta]
+  );
+
+  /** Marks a host as just opened, for the Recent list (the backend stores it). */
+  const touched = useCallback((kind: string, id: string) => {
+    const key = metaKey(kind, id);
+    const prev = metaRef.current;
+    setMeta(new Map(prev).set(key, { ...(prev.get(key) ?? emptyMeta(kind, id)), lastUsed: Date.now() }));
+  }, [setMeta]);
+
+  const toggleFavorite = (list: HostItem[]) => {
+    const on = !list.every((h) => h.meta.favorite);
+    list.forEach((h) => void saveMeta(h.kind, h.id, { favorite: on }));
+  };
+
+  const addTag = async (list: HostItem[]) => {
+    const tag = await dialogs.prompt({
+      title: list.length > 1 ? `Add a tag to ${list.length} hosts` : 'Add a tag',
+      label: 'Tag (search the sidebar with #tag):',
+      confirmLabel: 'Add',
+    });
+    const t = tag?.trim().replace(/^#/, '').toLowerCase().replace(/\s+/g, '-');
+    if (!t) return;
+    list.forEach((h) => {
+      if (!h.meta.tags.includes(t)) void saveMeta(h.kind, h.id, { tags: [...h.meta.tags, t] });
+    });
+  };
+
+  const exportConfig = async (list: HostItem[]) => {
+    const ids = list.filter((h) => h.kind === 'ssh').map((h) => h.id);
+    if (ids.length === 0) {
+      dialogs.toast('Only SSH hosts can be exported to an ssh config file.', 'error');
+      return;
+    }
+    try {
+      const path = await ExportSSHConfig(ids);
+      if (path) dialogs.toast(`Exported to ${path}`, 'success');
+    } catch (err) {
+      dialogs.toast(`Export failed: ${errorText(err)}`, 'error');
+    }
+  };
+
+  const duplicateHost = (h: HostItem) => {
+    const id = crypto.randomUUID();
+    const name = `${h.name} copy`;
+    const copyMeta = () =>
+      h.meta.tags.length || h.meta.notes ? SaveHostMeta({ ...h.meta, kind: h.kind, id, favorite: false, lastUsed: 0 }) : Promise.resolve();
+    if (h.kind === 'ssh')
+      return run('Could not duplicate', async () => {
+        const proxy = h.profile.proxy ? { ...h.profile.proxy, password: '', hasPassword: false } : undefined;
+        await SaveSSHProfile(sshForSave({ ...h.profile, id, name, password: '', hasPassword: false, proxy }));
+        await copyMeta();
+      });
+    if (h.kind === 'rdp')
+      return run('Could not duplicate', async () => {
+        await SaveRDPProfile(rdpForSave({ ...h.profile, id, name, password: '', hasPassword: false }));
+        await copyMeta();
+      });
+    return run('Could not duplicate', async () => {
+      await SaveStreamProfile(streamForSave({ ...h.profile, id, name }));
+      await copyMeta();
+    });
+  };
+
+  const deleteHosts = async (list: HostItem[]) => {
+    const ok = await dialogs.confirm({
+      title: `Delete ${list.length} hosts`,
+      message: `Delete ${list.length} saved hosts? Open sessions stay connected. This cannot be undone.`,
+      confirmLabel: 'Delete',
+      danger: true,
+    });
+    if (!ok) return;
+    await run('Could not delete hosts', async () => {
+      for (const h of list) {
+        await (h.kind === 'ssh' ? DeleteSSHProfile(h.id) : h.kind === 'rdp' ? DeleteRDPProfile(h.id) : DeleteStreamProfile(h.id));
+      }
+    });
+  };
+
+  /** Context menu for a multi-selection. */
+  const selectionMenu = (e: React.MouseEvent, list: HostItem[]) => {
+    const allFav = list.every((h) => h.meta.favorite);
+    const sshCount = list.filter((h) => h.kind === 'ssh').length;
+    openMenu(e, [
+      { label: `Open ${list.length} hosts in tabs`, icon: <Play size={13} />, onSelect: () => opts.openMany(list, false) },
+      { label: 'Open in one tab, split', icon: <Columns2 size={13} />, onSelect: () => opts.openMany(list, true) },
+      { type: 'separator' },
+      { label: `Edit ${list.length} hosts…`, icon: <SlidersHorizontal size={13} />, onSelect: () => opts.bulkEdit(list) },
+      { label: allFav ? 'Remove from favorites' : 'Add to favorites', icon: <Star size={13} />, onSelect: () => toggleFavorite(list) },
+      { label: 'Add tag…', icon: <Tag size={13} />, onSelect: () => void addTag(list) },
+      {
+        label: sshCount ? `Export ${sshCount} to ssh config…` : 'Export to ssh config…',
+        icon: <FileDown size={13} />,
+        disabled: sshCount === 0,
+        onSelect: () => void exportConfig(list),
+      },
+      { type: 'separator' },
+      { label: `Delete ${list.length} hosts`, icon: <Trash2 size={13} />, danger: true, onSelect: () => void deleteHosts(list) },
+    ]);
+  };
   const folderChoices = useMemo(() => folderOptions(tree), [tree]);
 
   const run = async (what: string, fn: () => Promise<unknown>) => {
@@ -130,11 +267,6 @@ export function useHostLibrary(opts: Options) {
     );
   };
 
-  const connectAll = (node: FolderNode) => {
-    const list = hostsUnder(node).filter((h) => h.kind === 'ssh');
-    list.forEach((h) => opts.connectSSH(h.profile as SSHProfile));
-  };
-
   const openHost = (h: HostItem) => {
     if (h.kind === 'ssh') opts.connectSSH(h.profile);
     else if (h.kind === 'rdp') opts.connectRDP(h.profile);
@@ -142,53 +274,42 @@ export function useHostLibrary(opts: Options) {
   };
 
   const hostMenu = (e: React.MouseEvent, h: HostItem) => {
-    const entries: MenuEntry[] =
-      h.kind === 'stream'
+    const edit = () => (h.kind === 'ssh' ? opts.editSSH(h.profile) : h.kind === 'rdp' ? opts.editRDP(h.profile) : opts.editStream(h.profile));
+    const entries: MenuEntry[] = [
+      { label: 'Connect', icon: <Play size={13} />, onSelect: () => openHost(h) },
+      ...(h.kind === 'rdp'
+        ? [{ label: 'Open in system client', icon: <Monitor size={13} />, onSelect: () => opts.connectRDP(h.profile, true) } as MenuEntry]
+        : []),
+      { label: 'Edit…', icon: <Pencil size={13} />, onSelect: edit },
+      { label: 'Duplicate', icon: <Copy size={13} />, onSelect: () => void duplicateHost(h) },
+      ...(h.kind === 'ssh'
         ? [
-            { label: 'Connect', icon: <Play size={13} />, onSelect: () => openHost(h) },
-            { label: 'Edit…', icon: <Pencil size={13} />, onSelect: () => opts.editStream(h.profile) },
-            {
-              label: 'Duplicate',
-              icon: <Copy size={13} />,
-              onSelect: () => run('Could not duplicate', () => SaveStreamProfile(streamForSave({ ...h.profile, id: crypto.randomUUID(), name: `${h.name} copy` }))),
-            },
-            { type: 'separator' },
-            { label: 'Delete', icon: <Trash2 size={13} />, danger: true, onSelect: () => deleteHost(h) },
-          ]
-        : h.kind === 'ssh'
-        ? [
-            { label: 'Connect', icon: <Play size={13} />, onSelect: () => openHost(h) },
-            { label: 'Edit…', icon: <Pencil size={13} />, onSelect: () => opts.editSSH(h.profile) },
-            {
-              label: 'Duplicate',
-              icon: <Copy size={13} />,
-              onSelect: () =>
-                run('Could not duplicate', () =>
-                  SaveSSHProfile(sshForSave({ ...h.profile, id: crypto.randomUUID(), name: `${h.name} copy`, password: '', hasPassword: false }))
-                ),
-            },
             {
               label: 'Copy address',
               icon: <Copy size={13} />,
               hint: h.detail,
               onSelect: () => void copyText(`${h.profile.username}@${h.profile.host}`),
-            },
-            { type: 'separator' },
-            { label: 'Delete', icon: <Trash2 size={13} />, danger: true, onSelect: () => deleteHost(h) },
+            } as MenuEntry,
+            { label: 'Export to ssh config…', icon: <FileDown size={13} />, onSelect: () => void exportConfig([h]) } as MenuEntry,
           ]
-        : [
-            { label: 'Connect', icon: <Play size={13} />, onSelect: () => openHost(h) },
-            { label: 'Open in system client', icon: <Monitor size={13} />, onSelect: () => opts.connectRDP(h.profile, true) },
-            { label: 'Edit…', icon: <Pencil size={13} />, onSelect: () => opts.editRDP(h.profile) },
-            { type: 'separator' },
-            { label: 'Delete', icon: <Trash2 size={13} />, danger: true, onSelect: () => deleteHost(h) },
-          ];
+        : []),
+      { type: 'separator' },
+      {
+        label: h.meta.favorite ? 'Remove from favorites' : 'Add to favorites',
+        icon: <Star size={13} />,
+        onSelect: () => toggleFavorite([h]),
+      },
+      { label: 'Add tag…', icon: <Tag size={13} />, onSelect: () => void addTag([h]) },
+      { type: 'separator' },
+      { label: 'Delete', icon: <Trash2 size={13} />, danger: true, onSelect: () => deleteHost(h) },
+    ];
     openMenu(e, entries);
   };
 
   const folderMenu = (e: React.MouseEvent, node: FolderNode) => {
     const f = node.folder;
-    const sshCount = hostsUnder(node).filter((h) => h.kind === 'ssh').length;
+    const all = hostsUnder(node);
+    const sshCount = all.filter((h) => h.kind === 'ssh').length;
     openMenu(e, [
       { label: 'New SSH host here', icon: <Server size={13} />, onSelect: () => opts.newSSH(f.id) },
       { label: 'New RDP profile here', icon: <Monitor size={13} />, onSelect: () => opts.newRDP(f.id) },
@@ -216,10 +337,23 @@ export function useHostLibrary(opts: Options) {
         ),
       },
       {
-        label: sshCount > 0 ? `Connect all (${sshCount})` : 'Connect all',
+        label: all.length > 0 ? `Open all (${all.length})` : 'Open all',
         icon: <Zap size={13} />,
+        disabled: all.length === 0,
+        onSelect: () => opts.openMany(all, false),
+      },
+      {
+        label: 'Open all in one tab, split',
+        icon: <Columns2 size={13} />,
+        disabled: all.length < 2,
+        onSelect: () => opts.openMany(all, true),
+      },
+      { label: 'Edit all hosts…', icon: <SlidersHorizontal size={13} />, disabled: all.length === 0, onSelect: () => opts.bulkEdit(all) },
+      {
+        label: sshCount ? `Export ${sshCount} to ssh config…` : 'Export to ssh config…',
+        icon: <FileDown size={13} />,
         disabled: sshCount === 0,
-        onSelect: () => connectAll(node),
+        onSelect: () => void exportConfig(all),
       },
       { type: 'separator' },
       { label: 'Delete folder', icon: <Trash2 size={13} />, danger: true, onSelect: () => deleteFolder(node) },
@@ -235,6 +369,7 @@ export function useHostLibrary(opts: Options) {
       { label: 'New folder', icon: <FolderPlus size={13} />, onSelect: () => newFolder('') },
       { type: 'separator' },
       { label: 'Import from another app…', icon: <Upload size={13} />, onSelect: () => setImportOpen(true) },
+      { label: 'Cloud inventories…', icon: <Cloud size={13} />, onSelect: () => opts.openInventories() },
     ]);
   };
 
@@ -244,6 +379,8 @@ export function useHostLibrary(opts: Options) {
   const actions: TreeActions = {
     openHost,
     hostMenu,
+    selectionMenu,
+    toggleFavorite: (h) => toggleFavorite([h]),
     folderMenu,
     move,
     renameFolder: (id, name) => {
@@ -312,6 +449,8 @@ export function useHostLibrary(opts: Options) {
               password: '',
               keyPath: it.keyFile,
               folderId,
+              x11Forwarding: !!it.x11,
+              proxy: it.proxyCommand && !plan.jumpOf.get(id) ? { type: 'command', host: '', port: 0, username: '', password: '', command: it.proxyCommand } : undefined,
             })
           );
         }
@@ -352,6 +491,10 @@ export function useHostLibrary(opts: Options) {
     ssh,
     rdp,
     streams,
+    hosts,
+    meta,
+    saveMeta,
+    touched,
     tree,
     folderChoices,
     reload,

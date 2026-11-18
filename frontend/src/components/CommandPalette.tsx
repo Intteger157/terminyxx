@@ -6,7 +6,9 @@ import type { QuickTarget } from '../lib/hosts';
 
 export interface PaletteItem {
   id: string;
-  group: 'Connect' | 'Hosts' | 'Workspaces' | 'Tabs' | 'Actions';
+  group: 'Connect' | 'Recent' | 'Hosts' | 'Workspaces' | 'Tabs' | 'Actions';
+  /** Shown only while the search is empty (Recent). */
+  emptyOnly?: boolean;
   label: string;
   hint?: string;
   icon?: ReactNode;
@@ -21,7 +23,7 @@ interface CommandPaletteProps {
   onClose: () => void;
 }
 
-const GROUP_ORDER: PaletteItem['group'][] = ['Connect', 'Hosts', 'Workspaces', 'Tabs', 'Actions'];
+const GROUP_ORDER: PaletteItem['group'][] = ['Connect', 'Recent', 'Hosts', 'Workspaces', 'Tabs', 'Actions'];
 
 /** Subsequence match; lower score is better. */
 function score(text: string, q: string): number | null {
@@ -63,6 +65,7 @@ export function CommandPalette({ items, onQuickConnect, onClose }: CommandPalett
       });
     }
     const scored = items
+      .filter((it) => !it.emptyOnly || !q)
       .map((it) => ({ it, s: score(`${it.label} ${it.hint ?? ''} ${it.keywords ?? ''}`, q) }))
       .filter((x) => x.s !== null)
       .sort((a, b) => GROUP_ORDER.indexOf(a.it.group) - GROUP_ORDER.indexOf(b.it.group) || (a.s as number) - (b.s as number));

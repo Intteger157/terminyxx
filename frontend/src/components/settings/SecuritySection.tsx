@@ -198,6 +198,17 @@ export function SecuritySection({ settings, modKey }: { settings: AppSettings; m
         <Row label="Allow agent forwarding" hint="Off by default. When on, hosts with “Forward SSH agent” enabled in their settings get access to your agent.">
           <Toggle checked={sec.ssh.allowAgentForwarding} onChange={(v) => void setAgentForwarding(v)} />
         </Row>
+        <Row
+          label="Allow X11 forwarding"
+          hint="Off by default. When on, hosts with “Forward X11” run graphical programs on your local X server (VcXsrv or Xming on Windows, XQuartz on macOS). A server you forward X11 to can watch and type into its windows."
+        >
+          <Toggle checked={sec.ssh.allowX11Forwarding} onChange={(v) => updateSecurity('ssh', { allowX11Forwarding: v })} />
+        </Row>
+        {sec.ssh.allowX11Forwarding && (
+          <Row label="X display" hint="Where the local X server listens. Empty: $DISPLAY, else localhost:0.0. The real X cookie is read with xauth and never sent to the server.">
+            <X11DisplayInput value={sec.ssh.x11Display} />
+          </Row>
+        )}
         <Row label="Trusted hosts" hint="SSH host keys (known_hosts) and RDP certificates you have verified. Changed ones are blocked with a warning.">
           <button className="btn-secondary h-8" onClick={() => setTrustedHosts(true)}>
             <ShieldCheck size={13} /> Manage…
@@ -254,5 +265,21 @@ function Keys({ keys }: { keys: string[] }) {
         </span>
       ))}
     </span>
+  );
+}
+
+function X11DisplayInput({ value }: { value: string }) {
+  const [text, setText] = useState(value);
+  const save = () => text.trim() !== value && updateSecurity('ssh', { x11Display: text.trim() });
+  return (
+    <input
+      className="input-field font-mono w-56 h-8"
+      value={text}
+      placeholder="localhost:0.0"
+      spellCheck={false}
+      onChange={(e) => setText(e.target.value)}
+      onBlur={save}
+      onKeyDown={(e) => e.key === 'Enter' && save()}
+    />
   );
 }

@@ -102,6 +102,8 @@ func (a *App) applySecurity(cfg security.SecurityConfig) {
 			MaskIPs:              cfg.Masking.MaskIPs,
 			StrictAlgorithms:     cfg.SSH.ModernAlgorithmsOnly,
 			AllowAgentForwarding: cfg.SSH.AllowAgentForwarding,
+			AllowX11:             cfg.SSH.AllowX11Forwarding,
+			X11Display:           cfg.SSH.X11Display,
 		})
 	}
 	connection.SetAgentSource(cfg.SSH.Agent, cfg.SSH.AgentPath)

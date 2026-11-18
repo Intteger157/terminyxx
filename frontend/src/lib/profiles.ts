@@ -18,6 +18,17 @@ export function sshForSave(p: SSHProfile) {
     sftpOnly: !!p.sftpOnly,
     identityId: p.identityId ?? '',
     options: { ...DEFAULT_HOST_OPTIONS, ...p.options },
+    x11Forwarding: !!p.x11Forwarding,
+    proxy: {
+      type: p.proxy?.type ?? '',
+      host: p.proxy?.host ?? '',
+      port: p.proxy?.port ?? 0,
+      username: p.proxy?.username ?? '',
+      password: p.proxy?.password ?? '',
+      hasPassword: !!p.proxy?.hasPassword,
+      clearPassword: !!p.proxy?.clearPassword,
+      command: p.proxy?.command ?? '',
+    },
   });
 }
 
