@@ -7,6 +7,7 @@ import type { main } from '../../../wailsjs/go/models';
 import { RdpAudioPlayer } from '../../lib/rdpAudio';
 import { DiskStorageBackend, TRANSFER_CHUNK, printSink, saveRemoteFiles, sessionPrinters } from '../../lib/rdpFiles';
 import { DriveChannel } from '../../lib/rdpDrives';
+import { nativeClipboard } from '../../lib/rdpClipboard';
 import { useDialogs } from '../ui/Dialogs';
 
 /** Fired (detail: tab id) to pick local files and copy them to that RDP session's clipboard. */
@@ -186,6 +187,10 @@ export function RdpPane({
         if (cancelled) return;
         ui.current = u;
         u.setEnableClipboard(session.clipboard);
+        if (session.clipboard) {
+          const native = nativeClipboard();
+          if (native) u.setClipboardProvider(native);
+        }
         if (session.clipboard) {
           // Files copied on either side travel over the clipboard channel.
           const backend = new DiskStorageBackend();

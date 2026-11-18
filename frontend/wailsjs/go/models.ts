@@ -472,6 +472,27 @@ export namespace main {
 
 }
 
+export namespace pasteboard {
+	
+	export class Content {
+	    text?: string;
+	    html?: string;
+	    png?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Content(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.text = source["text"];
+	        this.html = source["html"];
+	        this.png = source["png"];
+	    }
+	}
+
+}
+
 export namespace printing {
 	
 	export class Printer {

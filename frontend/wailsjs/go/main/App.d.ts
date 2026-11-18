@@ -9,6 +9,7 @@ import {importers} from '../models';
 import {printing} from '../models';
 import {rdp} from '../models';
 import {recording} from '../models';
+import {pasteboard} from '../models';
 import {main} from '../models';
 
 export function AppVersion():Promise<string>;
@@ -90,6 +91,10 @@ export function OpenRecordingsFolder():Promise<void>;
 export function OpenURL(arg1:string):Promise<void>;
 
 export function PickImportPaths(arg1:string):Promise<Array<string>>;
+
+export function RDPClipboardChanged():Promise<pasteboard.Content>;
+
+export function RDPClipboardWrite(arg1:pasteboard.Content):Promise<void>;
 
 export function RDPClose(arg1:string):Promise<void>;
 

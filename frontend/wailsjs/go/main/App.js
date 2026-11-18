@@ -162,6 +162,14 @@ export function PickImportPaths(arg1) {
   return window['go']['main']['App']['PickImportPaths'](arg1);
 }
 
+export function RDPClipboardChanged() {
+  return window['go']['main']['App']['RDPClipboardChanged']();
+}
+
+export function RDPClipboardWrite(arg1) {
+  return window['go']['main']['App']['RDPClipboardWrite'](arg1);
+}
+
 export function RDPClose(arg1) {
   return window['go']['main']['App']['RDPClose'](arg1);
 }

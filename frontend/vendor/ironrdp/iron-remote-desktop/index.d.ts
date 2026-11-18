@@ -17,6 +17,18 @@ declare interface ClipboardItem_2 {
 }
 export { ClipboardItem_2 as ClipboardItem }
 
+/**
+ * Reads and writes the local clipboard for the component instead of `navigator.clipboard`, for hosts where the
+ * browser's clipboard API can't be polled (WebKit shows a "Paste" menu on every read), e.g. a desktop app that has
+ * native clipboard access. Keys are MIME types: `text/*` values are strings, `image/*` values are bytes.
+ */
+export declare interface ClipboardProvider {
+    /** The clipboard content if it changed since the previous `read` or `write`, otherwise `null`. */
+    read(): Promise<Record<string, string | Uint8Array> | null>;
+    /** Replaces the clipboard content with what the server copied. */
+    write(items: Record<string, string | Uint8Array>): Promise<void>;
+}
+
 export declare class Config {
     readonly username: string;
     readonly password: string;
@@ -351,6 +363,11 @@ export declare interface UserInteraction {
     saveRemoteClipboardData(): Promise<void>;
     sendClipboardData(): Promise<void>;
     invokeExtension(ext: Extension): void;
+    /**
+     * Uses `provider` for the local clipboard instead of `navigator.clipboard`, with automatic clipboard sync: it is
+     * polled while the page has the focus, and what the server copies is written to it. Call it before connect().
+     */
+    setClipboardProvider(provider: ClipboardProvider): void;
     /**
      * Enable file transfer support. Must be called before connect().
      * The provider becomes active after connect() resolves.

@@ -6,7 +6,7 @@ The built-in RDP client (`components/rdp/RdpPane.tsx`) uses these two packages i
 - `iron-remote-desktop-rdp`: the RDP backend, IronRDP compiled to WebAssembly (the `.wasm` is inlined as a `data:` URL).
 
 They are built from our fork [Intteger157/IronRDP](https://github.com/Intteger157/IronRDP), branch `terminyxx`, commit
-`78024a8fe595cd221660870f04c59bced50b785d`: upstream [IronRDP](https://github.com/Devolutions/IronRDP) `abfc97b`
+`3576f181101ec28a070b5fde5cb7a7bf97d5a126`: upstream [IronRDP](https://github.com/Devolutions/IronRDP) `abfc97b`
 (2026-11-16, sspi 0.23.1) plus changes meant to go upstream:
 
 - `printers([...])` announces several printers (every local printer, each with its own driver), `onJobStart` gets the
@@ -18,6 +18,9 @@ They are built from our fork [Intteger157/IronRDP](https://github.com/Intteger15
   and the window's bottom-right corner, refits when the element resizes (`ResizeObserver`), and `resize()` no longer sets
   the viewer to the requested size in desktop pixels (twice the CSS size on a Retina screen) before the server answers.
 - `scale="stretch"` fills the element exactly without keeping the aspect ratio (like mstsc's smart sizing).
+- `setClipboardProvider({ read, write })` replaces `navigator.clipboard` with the host's own clipboard access (automatic
+  sync: `read` is polled while the page has the focus and returns only changes). WebKit asks with a "Paste" menu on every
+  read, so without it the clipboard stays text-only and nothing local reaches the server.
 
 The npm releases (`@devolutions/iron-remote-desktop-rdp` 0.7.0, May 2026) embed sspi 0.21.0. With that version, Windows 11
 refused NLA sign-in from Terminyxx with ERROR_LOGON_FAILURE even though Windows App accepted the same credentials, and Windows
