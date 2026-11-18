@@ -550,7 +550,7 @@ function FullscreenBar({
   // In macOS full screen, the cursor at the top edge slides the menu bar and the
   // window's title bar over the page, so there the bar drops below them.
   const place = mac
-    ? `top-0 rounded-xl ${shown ? 'translate-y-[96px]' : '-translate-y-full'}`
+    ? `top-0 rounded-xl ${shown ? 'translate-y-[80px]' : '-translate-y-full'}`
     : `top-0 rounded-b-xl ${shown ? 'translate-y-0' : '-translate-y-full'}`;
   return (
     <>

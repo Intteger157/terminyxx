@@ -16,6 +16,7 @@ import (
 	"terminyxx/internal/connection"
 	"terminyxx/internal/filesink"
 	"terminyxx/internal/importers"
+	"terminyxx/internal/macwin"
 	"terminyxx/internal/rdp"
 	"terminyxx/internal/rdpdrive"
 	"terminyxx/internal/rdpgw"
@@ -55,6 +56,7 @@ func NewApp() *App {
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	macwin.InstallFullscreenFix()
 
 	// Saved passwords go through the vault: sealed under the master password
 	// when one is set (see initSecurity).
