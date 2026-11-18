@@ -169,7 +169,11 @@ export function RdpPane({
         if (cancelled) return;
         const el = document.createElement('iron-remote-desktop');
         Object.assign(el, { module: rdp.Backend });
-        el.setAttribute('scale', 'fit');
+        // Fill the pane exactly. The desktop is requested at the pane's size, so
+        // this is 1:1 unless the server picks another size (or the host has a
+        // fixed resolution): then it is stretched, like mstsc's smart sizing,
+        // instead of letterboxed.
+        el.setAttribute('scale', 'stretch');
         el.setAttribute('verbose', 'false');
         el.setAttribute('flexcenter', 'true');
         el.style.cssText = 'display:flex;position:absolute;inset:0;';
