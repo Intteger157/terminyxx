@@ -478,6 +478,7 @@ export function RdpPane({
         files.current!.provider.handleDrop(e.nativeEvent).then(send, (err) => dialogs.toast(String(err), 'error'));
       }}
     >
+      {visible && <SizeInfo host={host} element={element} />}
       {fullscreen && (
         <FullscreenBar
           title={title}
@@ -581,6 +582,60 @@ function FullscreenBar({
         </button>
       </div>
     </>
+  );
+}
+
+/**
+ * Ctrl+Alt+Shift+I shows the sizes that decide how the picture fits: the
+ * screen, the web view, the pane and the remote desktop. Release builds have
+ * no developer tools, so this is how a misfit on another machine is measured.
+ */
+function SizeInfo({ host, element }: { host: React.RefObject<HTMLDivElement | null>; element: React.RefObject<HTMLElement | null> }) {
+  const [on, setOn] = useState(false);
+  const [text, setText] = useState('');
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.code === 'KeyI' && e.ctrlKey && e.altKey && e.shiftKey) {
+        e.preventDefault();
+        e.stopPropagation();
+        setOn((v) => !v);
+      }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, []);
+  useEffect(() => {
+    if (!on) return;
+    const r = (el: Element | null | undefined) => {
+      if (!el) return '-';
+      const b = el.getBoundingClientRect();
+      return `${Math.round(b.width)}x${Math.round(b.height)} @${Math.round(b.left)},${Math.round(b.top)}`;
+    };
+    const tick = () => {
+      const root = element.current?.shadowRoot;
+      const canvas = root?.querySelector('canvas');
+      const vv = window.visualViewport;
+      setText(
+        [
+          `screen ${screen.width}x${screen.height} avail ${screen.availWidth}x${screen.availHeight} dpr ${window.devicePixelRatio}`,
+          `window ${window.innerWidth}x${window.innerHeight} outer ${window.outerWidth}x${window.outerHeight}`,
+          `viewport ${vv ? `${Math.round(vv.width)}x${Math.round(vv.height)} @${Math.round(vv.offsetLeft)},${Math.round(vv.offsetTop)}` : '-'} doc ${document.documentElement.clientWidth}x${document.documentElement.clientHeight}`,
+          `pane ${r(host.current)}`,
+          `element ${r(element.current)}`,
+          `viewer ${r(root?.querySelector('.screen-viewer'))}`,
+          `canvas ${r(canvas)} desktop ${canvas ? `${canvas.width}x${canvas.height}` : '-'} scale ${element.current?.getAttribute('scale') ?? '-'}`,
+        ].join('\n')
+      );
+    };
+    tick();
+    const t = window.setInterval(tick, 500);
+    return () => window.clearInterval(t);
+  }, [on, host, element]);
+  if (!on) return null;
+  return (
+    <pre className="absolute left-3 bottom-3 z-30 m-0 px-3 py-2 rounded-lg bg-black/80 text-[11px] leading-4 text-green-300 font-mono pointer-events-none whitespace-pre">
+      {text}
+    </pre>
   );
 }
 
