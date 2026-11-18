@@ -1,3 +1,17 @@
 build/bin
 node_modules
 frontend/dist
+
+# Local scratch and personal tooling (not app code)
+/*.exe
+/CLAUDE.new
+*.new
+build/icon-concepts/
+.claude/settings.local.json
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
