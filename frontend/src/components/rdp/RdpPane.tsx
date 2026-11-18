@@ -73,15 +73,35 @@ const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 const even = (n: number) => Math.max(200, Math.floor(n / 2) * 2);
 
+// Without the graphics pipeline (IronRDP web has it off) Windows' RDP server
+// accepts desktops up to 4096x2048; a larger request gets a resolution of the
+// server's choosing, with another aspect ratio than the pane.
+const MAX_DESKTOP_W = 4096;
+const MAX_DESKTOP_H = 2048;
+
 /**
- * Retina and other high-density screens: the desktop is requested in device
- * pixels and Windows is asked to scale its UI by the same factor (as Windows
- * App does), so text is sharp instead of an upscaled low-resolution picture.
+ * The desktop size for a pane of `cssW` x `cssH` CSS pixels. On Retina and
+ * other high-density screens it is requested in device pixels and Windows is
+ * asked to scale its UI by the same factor (as Windows App does), so text is
+ * sharp instead of an upscaled low-resolution picture. A pane too large for
+ * that (an external 4K or 5K display) gets fewer pixels with the same aspect
+ * ratio and a smaller UI scale, so it is still filled.
  */
-function displayScale(): { ratio: number; percent: number } {
+function desktopFor(cssW: number, cssH: number): { width: number; height: number; percent: number } {
   const dpr = Math.min(Math.max(window.devicePixelRatio || 1, 1), 4);
-  const ratio = Math.round(dpr * 4) / 4; // Windows' scale steps are 25%
-  return { ratio, percent: Math.round(ratio * 100) };
+  const ratio = Math.min(dpr, MAX_DESKTOP_W / cssW, MAX_DESKTOP_H / cssH);
+  const step = Math.round(ratio * 4) / 4; // Windows' scale steps are 25%
+  return {
+    width: Math.min(MAX_DESKTOP_W, even(cssW * ratio)),
+    height: Math.min(MAX_DESKTOP_H, even(cssH * ratio)),
+    percent: Math.min(500, Math.max(100, Math.round(step * 100))),
+  };
+}
+
+/** The server's current desktop size: the component's canvas follows it. */
+function currentDesktop(el: HTMLElement | null): { width: number; height: number } | null {
+  const canvas = el?.shadowRoot?.querySelector('canvas');
+  return canvas ? { width: canvas.width, height: canvas.height } : null;
 }
 
 /**
@@ -120,6 +140,7 @@ export function RdpPane({
   const element = useRef<HTMLElement | null>(null);
   const ui = useRef<UserInteraction | null>(null);
   const live = useRef(false);
+  const syncSize = useRef<() => void>(() => {});
   const cb = useRef({ onConnected, onEnded });
   cb.current = { onConnected, onEnded };
   const dialogs = useDialogs();
@@ -183,9 +204,10 @@ export function RdpPane({
 
         const rect = container.getBoundingClientRect();
         const fitPane = dynamicResolution || !session.width || !session.height;
-        const { ratio, percent } = displayScale();
-        const width = fitPane ? even(rect.width * ratio) : session.width;
-        const height = fitPane ? even(rect.height * ratio) : session.height;
+        const fit = desktopFor(rect.width, rect.height);
+        const percent = fit.percent;
+        const width = fitPane ? fit.width : session.width;
+        const height = fitPane ? fit.height : session.height;
         const builder = u
           .configBuilder()
           .withUsername(session.username)
@@ -264,6 +286,9 @@ export function RdpPane({
         u.setVisibility(true);
         cb.current.onConnected();
         if (focused) el.focus();
+        // The pane may have changed while connecting (full screen, sidebar), and
+        // a resize sent before Display Control is up is dropped: check again.
+        window.setTimeout(() => syncSize.current(), 1500);
         await info.run();
         live.current = false;
         if (!cancelled) cb.current.onEnded(null, false);
@@ -299,29 +324,48 @@ export function RdpPane({
 
   // Follow the pane size: the server changes its resolution (Display
   // Control), otherwise the picture is scaled to fit.
+  // A request can be dropped (Display Control not open yet) or answered with
+  // another size, so it is compared with the desktop the server reports and
+  // sent again a few times, not just once per pane size.
   useEffect(() => {
-    if (!dynamicResolution) return;
+    if (!dynamicResolution) {
+      syncSize.current = () => {};
+      return;
+    }
     const container = host.current!;
     let timer = 0;
+    let recheck = 0;
     let last = '';
+    let attempts = 0;
+    const sync = () => {
+      window.clearTimeout(recheck);
+      const r = container.getBoundingClientRect();
+      if (!live.current || r.width < 50 || r.height < 50) return;
+      const want = desktopFor(r.width, r.height);
+      const have = currentDesktop(element.current);
+      const key = `${want.width}x${want.height}@${want.percent}`;
+      if (key !== last) {
+        last = key;
+        attempts = 0;
+      } else if (have && Math.abs(have.width - want.width) <= 8 && Math.abs(have.height - want.height) <= 8) {
+        return;
+      }
+      if (attempts >= 3) return;
+      attempts++;
+      ui.current?.resize(want.width, want.height, want.percent);
+      recheck = window.setTimeout(sync, 2500);
+    };
+    syncSize.current = sync;
     const ro = new ResizeObserver(() => {
       window.clearTimeout(timer);
-      timer = window.setTimeout(() => {
-        const r = container.getBoundingClientRect();
-        if (!live.current || r.width < 50 || r.height < 50) return;
-        const { ratio, percent } = displayScale();
-        const w = even(r.width * ratio);
-        const h = even(r.height * ratio);
-        const key = `${w}x${h}@${percent}`;
-        if (key === last) return;
-        last = key;
-        ui.current?.resize(w, h, percent);
-      }, 400);
+      timer = window.setTimeout(sync, 400);
     });
     ro.observe(container);
     return () => {
       ro.disconnect();
       window.clearTimeout(timer);
+      window.clearTimeout(recheck);
+      syncSize.current = () => {};
     };
   }, [dynamicResolution]);
 
