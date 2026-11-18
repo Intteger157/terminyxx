@@ -288,6 +288,15 @@ export function RdpPane({
         }
         live.current = true;
         u.setVisibility(true);
+        // The scale attribute doesn't reach the component's prop, so it stays
+        // at its default (fit) and letterboxes a desktop the server sized on
+        // its own. Set it through the API, once the component is visible
+        // (it ignores scale changes while hidden). 4 = ScreenScale.Stretch,
+        // a type-only export.
+        const stretch = () => u.setScale(4 as Parameters<UserInteraction['setScale']>[0]);
+        stretch();
+        // Again after the component's own rescale 150 ms after it is shown.
+        window.setTimeout(() => !cancelled && stretch(), 400);
         cb.current.onConnected();
         if (focused) el.focus();
         // The pane may have changed while connecting (full screen, sidebar), and
