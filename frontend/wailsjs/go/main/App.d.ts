@@ -87,6 +87,8 @@ export function OpenPrintsFolder():Promise<void>;
 
 export function OpenRecordingsFolder():Promise<void>;
 
+export function OpenURL(arg1:string):Promise<void>;
+
 export function PickImportPaths(arg1:string):Promise<Array<string>>;
 
 export function RDPClose(arg1:string):Promise<void>;

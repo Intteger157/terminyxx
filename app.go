@@ -338,8 +338,9 @@ func (a *App) OpenRecordingsFolder() error {
 	if err := os.MkdirAll(a.recordingsDir, 0o700); err != nil {
 		return err
 	}
-	runtime.BrowserOpenURL(a.ctx, a.recordingsDir)
-	return nil
+	// BrowserOpenURL only accepts URLs (Wails rejects a plain path), so hand
+	// the folder to the OS file manager instead.
+	return openFolder(a.recordingsDir)
 }
 
 // Sync file bindings
