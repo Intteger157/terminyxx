@@ -1,4 +1,5 @@
 import { useRef } from 'react';
+import { hostTagColor } from '../../lib/hostOptions';
 import { House, Minus, PanelLeft, Search, Settings, Square, X } from 'lucide-react';
 import { Quit, WindowMinimise, WindowToggleMaximise } from '../../../wailsjs/runtime/runtime';
 import type { TerminalTab } from '../../types';
@@ -147,6 +148,7 @@ export function TitleBar({
               >
                 <StatusDot status={tab.status} color={hostColor(tab.profile?.id ?? tab.host ?? tab.id)} />
                 <span className="truncate flex-1 text-[12.5px] font-medium">{tab.title}</span>
+                <TagLine color={hostTagColor(tab.profile)} />
                 <button
                   className={`icon-btn w-5 h-5 ${groupActive ? 'opacity-60' : 'opacity-0'} group-hover:opacity-100`}
                   onMouseDown={(e) => e.stopPropagation()}
@@ -185,7 +187,7 @@ export function TitleBar({
                     {i > 0 && <span className="w-px h-3.5 bg-white/10 mx-0.5 flex-shrink-0" />}
                     <div
                       {...dragProps(tab.id)}
-                      className={`flex items-center gap-1.5 h-[22px] px-1.5 rounded-md max-w-[150px] min-w-0 transition-colors ${
+                      className={`relative flex items-center gap-1.5 h-[22px] px-1.5 rounded-md max-w-[150px] min-w-0 transition-colors ${
                         focused ? 'bg-white/[0.09] text-gray-100' : groupActive ? 'text-gray-400 hover:text-gray-200' : ''
                       }`}
                       onMouseDown={middleClose(tab.id)}
@@ -195,6 +197,7 @@ export function TitleBar({
                     >
                       <StatusDot status={tab.status} color={hostColor(tab.profile?.id ?? tab.host ?? tab.id)} />
                       <span className="truncate text-[12px] font-medium">{tab.title}</span>
+                      <TagLine color={hostTagColor(tab.profile)} />
                     </div>
                   </div>
                 );
@@ -296,4 +299,10 @@ function WindowControls() {
       </button>
     </div>
   );
+}
+
+/** The host's color tag, as a line under its tab. */
+function TagLine({ color }: { color?: string }) {
+  if (!color) return null;
+  return <span className="absolute left-2 right-2 -bottom-[3px] h-[2px] rounded-full pointer-events-none" style={{ background: color }} aria-hidden />;
 }

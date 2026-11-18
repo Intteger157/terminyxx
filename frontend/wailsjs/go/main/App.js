@@ -42,6 +42,10 @@ export function ExportSync(arg1, arg2) {
   return window['go']['main']['App']['ExportSync'](arg1, arg2);
 }
 
+export function GenerateSSHKey(arg1, arg2, arg3) {
+  return window['go']['main']['App']['GenerateSSHKey'](arg1, arg2, arg3);
+}
+
 export function GetBiometrics() {
   return window['go']['main']['App']['GetBiometrics']();
 }
@@ -78,12 +82,20 @@ export function ImportSync(arg1) {
   return window['go']['main']['App']['ImportSync'](arg1);
 }
 
+export function InstallPublicKey(arg1, arg2) {
+  return window['go']['main']['App']['InstallPublicKey'](arg1, arg2);
+}
+
 export function IsRecording(arg1) {
   return window['go']['main']['App']['IsRecording'](arg1);
 }
 
 export function LaunchRDP(arg1) {
   return window['go']['main']['App']['LaunchRDP'](arg1);
+}
+
+export function ListAgentKeys() {
+  return window['go']['main']['App']['ListAgentKeys']();
 }
 
 export function ListContainers(arg1, arg2) {
@@ -116,6 +128,10 @@ export function ListRDPProfiles() {
 
 export function ListRecordings() {
   return window['go']['main']['App']['ListRecordings']();
+}
+
+export function ListSSHKeys() {
+  return window['go']['main']['App']['ListSSHKeys']();
 }
 
 export function ListSSHProfiles() {

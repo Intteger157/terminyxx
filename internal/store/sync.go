@@ -178,14 +178,18 @@ func (s *Store) ImportBundle(b Bundle) (ImportResult, error) {
 }
 
 // resetRiskyFlags turns off settings from a sync file that act on their own
-// once the host is used: agent forwarding (lets the server use local keys)
-// and tunnels that start automatically. A setting the user already had on
+// once the host is used: agent forwarding (lets the server use local keys),
+// tunnels that start automatically and commands typed after login. A setting the user already had on
 // for the same local host (and the same tunnel) is kept. It reports whether
 // anything was turned off.
 func resetRiskyFlags(p *SSHProfile, local *SSHProfile) bool {
 	changed := false
 	if p.AgentForwarding && (local == nil || !local.AgentForwarding) {
 		p.AgentForwarding = false
+		changed = true
+	}
+	if p.Options.StartupCommands != "" && (local == nil || local.Options.StartupCommands != p.Options.StartupCommands) {
+		p.Options.StartupCommands = ""
 		changed = true
 	}
 	for i := range p.Tunnels {

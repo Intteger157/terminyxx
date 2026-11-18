@@ -29,10 +29,14 @@ interface XTermWrapperProps {
   menuExtras?: MenuEntry[];
   /** user@host, shown in clipboard prompts. */
   hostLabel?: string;
+  /** Terminal theme of this host ('' or undefined = the app's theme). */
+  themeId?: string;
   onSize?: (cols: number, rows: number) => void;
 }
 
-export function XTermWrapper({ connectionId, visible, focused, connected, menuExtras, hostLabel, onSize }: XTermWrapperProps) {
+export function XTermWrapper({ connectionId, visible, focused, connected, menuExtras, hostLabel, themeId, onSize }: XTermWrapperProps) {
+  const themeRef = useRef(themeId);
+  themeRef.current = themeId;
   const onSizeRef = useRef(onSize);
   onSizeRef.current = onSize;
   const dialogs = useDialogs();
@@ -66,7 +70,7 @@ export function XTermWrapper({ connectionId, visible, focused, connected, menuEx
     };
 
     const term = new Terminal({
-      ...terminalOptions(getSettings()),
+      ...terminalOptions(getSettings(), themeRef.current),
       cursorWidth: 2,
       letterSpacing: 0,
       allowProposedApi: true,
@@ -76,7 +80,7 @@ export function XTermWrapper({ connectionId, visible, focused, connected, menuEx
         activate: (_e, uri) => confirmOpen(uri),
       },
     });
-    container.style.background = themeById(getSettings().appearance.themeId).colors.background;
+    container.style.background = themeById(themeRef.current || getSettings().appearance.themeId).colors.background;
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.loadAddon(new WebLinksAddon((_e, uri) => confirmOpen(uri)));
@@ -120,8 +124,8 @@ export function XTermWrapper({ connectionId, visible, focused, connected, menuEx
       const prev = applied;
       applied = next;
       if (next.appearance === prev.appearance && next.terminal === prev.terminal) return;
-      Object.assign(term.options, terminalOptions(next));
-      container.style.background = themeById(next.appearance.themeId).colors.background;
+      Object.assign(term.options, terminalOptions(next, themeRef.current));
+      container.style.background = themeById(themeRef.current || next.appearance.themeId).colors.background;
       resize();
     });
 
@@ -285,6 +289,19 @@ export function XTermWrapper({ connectionId, visible, focused, connected, menuEx
       });
   }, [connected, connectionId]);
 
+  // The host's theme can change while it is open (edited in the host dialog).
+  const firstTheme = useRef(true);
+  useEffect(() => {
+    if (firstTheme.current) {
+      firstTheme.current = false;
+      return;
+    }
+    const term = termRef.current;
+    if (!term) return;
+    Object.assign(term.options, terminalOptions(getSettings(), themeId));
+    if (containerRef.current) containerRef.current.style.background = themeById(themeId || getSettings().appearance.themeId).colors.background;
+  }, [themeId]);
+
   useEffect(() => {
     if (!visible) return;
     // Focus right away (not in rAF, which can be throttled): with split
@@ -330,8 +347,8 @@ const modKeyLabel = /Mac/i.test(navigator.platform) ? '⌘' : 'Ctrl';
 // Ctrl/Cmd+Shift+<key> combos the app handles; xterm must not consume them.
 const APP_KEYS = ['KeyF', 'KeyP', 'KeyT', 'KeyW', 'KeyB', 'KeyD', 'KeyE', 'KeyL', 'KeyM'];
 
-export function terminalOptions(s: AppSettings) {
-  const theme = themeById(s.appearance.themeId);
+export function terminalOptions(s: AppSettings, themeId?: string) {
+  const theme = themeById(themeId || s.appearance.themeId);
   return {
     theme: theme.colors,
     // Safety net for colors outside the palette (256-color / truecolor

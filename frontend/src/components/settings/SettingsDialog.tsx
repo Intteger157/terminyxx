@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { ReactNode } from 'react';
-import { ArrowDown, ArrowUp, Check, Download, Highlighter, Info, Loader2, RefreshCw, Keyboard, Palette, Pencil, Plus, RotateCcw, ShieldCheck, CloudUpload, SquareTerminal, Trash2, UserRound, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, Check, Download, Highlighter, Info, Loader2, RefreshCw, Keyboard, Palette, Pencil, Plus, RotateCcw, ShieldCheck, CloudUpload, SquareTerminal, Trash2, UserRound, KeyRound, X } from 'lucide-react';
 import { Modal } from '../ui/Dialogs';
 import { Select } from '../ui/Select';
 import { TerminalPreview } from './TerminalPreview';
@@ -12,11 +12,12 @@ import { compileRule } from '../../lib/highlight';
 import { SecuritySection } from './SecuritySection';
 import { SyncSection } from './SyncSection';
 import { IdentitiesSection } from './IdentitiesSection';
+import { KeysSection } from './KeysSection';
 import { OpenURL } from '../../../wailsjs/go/main/App';
 import { checkForUpdate, useUpdates } from '../../lib/updates';
 import { parseReleaseNotes } from '../../lib/releaseNotes';
 
-export type SettingsSection = 'appearance' | 'terminal' | 'highlight' | 'security' | 'identities' | 'sync' | 'shortcuts' | 'about';
+export type SettingsSection = 'appearance' | 'terminal' | 'highlight' | 'security' | 'identities' | 'keys' | 'sync' | 'shortcuts' | 'about';
 
 const SECTIONS: { id: SettingsSection; label: string; icon: ReactNode }[] = [
   { id: 'appearance', label: 'Appearance', icon: <Palette size={15} /> },
@@ -24,6 +25,7 @@ const SECTIONS: { id: SettingsSection; label: string; icon: ReactNode }[] = [
   { id: 'highlight', label: 'Highlighting', icon: <Highlighter size={15} /> },
   { id: 'security', label: 'Security', icon: <ShieldCheck size={15} /> },
   { id: 'identities', label: 'Identities', icon: <UserRound size={15} /> },
+  { id: 'keys', label: 'SSH keys', icon: <KeyRound size={15} /> },
   { id: 'sync', label: 'Sync', icon: <CloudUpload size={15} /> },
   { id: 'shortcuts', label: 'Shortcuts', icon: <Keyboard size={15} /> },
   { id: 'about', label: 'About', icon: <Info size={15} /> },
@@ -56,6 +58,7 @@ export function SettingsDialog({ modKey, initial = 'appearance', onClose }: { mo
           {section === 'highlight' && <HighlightSection settings={settings} />}
           {section === 'security' && <SecuritySection settings={settings} modKey={modKey} />}
           {section === 'identities' && <IdentitiesSection />}
+          {section === 'keys' && <KeysSection />}
           {section === 'sync' && <SyncSection />}
           {section === 'shortcuts' && <ShortcutsSection modKey={modKey} />}
           {section === 'about' && <AboutSection settings={settings} />}

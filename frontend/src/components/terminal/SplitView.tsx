@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { hostTagColor } from '../../lib/hostOptions';
 import type { ReactNode } from 'react';
 import { Columns2, Rows2, X } from 'lucide-react';
 import type { TerminalTab } from '../../types';
@@ -150,6 +151,9 @@ export function SplitView(props: SplitViewProps) {
             onMouseDownCapture={() => !focused && props.onFocus(tab.id)}
             onFocusCapture={() => !focused && props.onFocus(tab.id)}
           >
+            {hostTagColor(tab.profile) && (
+              <div className="absolute top-0 inset-x-0 h-[2px] z-10 pointer-events-none" style={{ background: hostTagColor(tab.profile) }} aria-hidden />
+            )}
             {split && (
               <PaneHeader
                 tab={tab}

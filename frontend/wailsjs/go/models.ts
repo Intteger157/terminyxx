@@ -21,6 +21,38 @@ export namespace capture {
 
 export namespace connection {
 	
+	export class AgentStatus {
+	    running: boolean;
+	    keys: sshkeys.AgentKey[];
+	
+	    static createFrom(source: any = {}) {
+	        return new AgentStatus(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.running = source["running"];
+	        this.keys = this.convertValues(source["keys"], sshkeys.AgentKey);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class ConnectRequest {
 	    id: string;
 	    host: string;
@@ -37,6 +69,8 @@ export namespace connection {
 	    agentForwarding: boolean;
 	    jump: ConnectRequest[];
 	    jumpFor: string;
+	    encoding: string;
+	    startup: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new ConnectRequest(source);
@@ -59,6 +93,8 @@ export namespace connection {
 	        this.agentForwarding = source["agentForwarding"];
 	        this.jump = this.convertValues(source["jump"], ConnectRequest);
 	        this.jumpFor = source["jumpFor"];
+	        this.encoding = source["encoding"];
+	        this.startup = source["startup"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -778,6 +814,53 @@ export namespace security {
 
 }
 
+export namespace sshkeys {
+	
+	export class AgentKey {
+	    type: string;
+	    fingerprint: string;
+	    comment: string;
+	    publicKey: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new AgentKey(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.type = source["type"];
+	        this.fingerprint = source["fingerprint"];
+	        this.comment = source["comment"];
+	        this.publicKey = source["publicKey"];
+	    }
+	}
+	export class Key {
+	    name: string;
+	    path: string;
+	    type: string;
+	    fingerprint: string;
+	    comment: string;
+	    encrypted: boolean;
+	    publicKey: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Key(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.path = source["path"];
+	        this.type = source["type"];
+	        this.fingerprint = source["fingerprint"];
+	        this.comment = source["comment"];
+	        this.encrypted = source["encrypted"];
+	        this.publicKey = source["publicKey"];
+	    }
+	}
+
+}
+
 export namespace store {
 	
 	export class Folder {
@@ -798,6 +881,24 @@ export namespace store {
 	        this.parentId = source["parentId"];
 	        this.color = source["color"];
 	        this.sortOrder = source["sortOrder"];
+	    }
+	}
+	export class HostOptions {
+	    color: string;
+	    startupCommands: string;
+	    encoding: string;
+	    themeId: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new HostOptions(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.color = source["color"];
+	        this.startupCommands = source["startupCommands"];
+	        this.encoding = source["encoding"];
+	        this.themeId = source["themeId"];
 	    }
 	}
 	export class Identity {
@@ -895,6 +996,7 @@ export namespace store {
 	    tunnels: Tunnel[];
 	    sftpOnly: boolean;
 	    identityId: string;
+	    options: HostOptions;
 	
 	    static createFrom(source: any = {}) {
 	        return new SSHProfile(source);
@@ -920,6 +1022,7 @@ export namespace store {
 	        this.tunnels = this.convertValues(source["tunnels"], Tunnel);
 	        this.sftpOnly = source["sftpOnly"];
 	        this.identityId = source["identityId"];
+	        this.options = this.convertValues(source["options"], HostOptions);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

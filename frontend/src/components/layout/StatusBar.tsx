@@ -172,7 +172,8 @@ export function StatusBar({ tab, size, sftpOpen, openTabs, onToggleSftp, onDisco
           {size.cols}×{size.rows}
         </span>
       )}
-      {tab && !sftpOnly && <span>UTF-8</span>}
+      {/* The charset this session was opened with (the host's setting at connect time). */}
+      {tab && !sftpOnly && <span>{tab.stream ? 'UTF-8' : (tab.profile?.options?.encoding || 'utf-8').toUpperCase()}</span>}
       {tab && !sftpOnly && <span>xterm-256color</span>}
       {tab && status === 'connected' && tab.profile && !sftpOnly && <HostMonitor tab={tab} />}
       {tab && status === 'connected' && tab.profile && !sftpOnly && (

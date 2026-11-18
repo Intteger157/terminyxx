@@ -1,4 +1,5 @@
 import type { RDPOptions, RDPProfile, SSHProfile } from '../types';
+import { DEFAULT_HOST_OPTIONS } from './hostOptions';
 import { rdp, store } from '../../wailsjs/go/models';
 
 // The Go bindings expect every field; fill optional ones before saving.
@@ -16,6 +17,7 @@ export function sshForSave(p: SSHProfile) {
     agentForwarding: !!p.agentForwarding,
     sftpOnly: !!p.sftpOnly,
     identityId: p.identityId ?? '',
+    options: { ...DEFAULT_HOST_OPTIONS, ...p.options },
   });
 }
 

@@ -35,6 +35,19 @@ export interface SSHProfile {
   sftpOnly?: boolean;
   /** Saved identity whose login (user, password or key) this host uses. */
   identityId?: string;
+  /** Per-host terminal settings. */
+  options?: HostOptions;
+}
+
+export interface HostOptions {
+  /** Tag color id from HOST_COLORS ('' = none). */
+  color: string;
+  /** Typed into the shell after every login, one command per line. */
+  startupCommands: string;
+  /** Server charset ('' = UTF-8). */
+  encoding: string;
+  /** Terminal theme for this host ('' = the app's theme). */
+  themeId: string;
 }
 
 /** A reusable login shared by SSH hosts. */

@@ -1,6 +1,7 @@
 package connection
 
 import (
+	"golang.org/x/text/encoding"
 	"io"
 	"sync"
 	"unicode/utf8"
@@ -20,6 +21,8 @@ type ptyOptions struct {
 	forwardAgent bool
 	// recorder returns the active session recording, or nil.
 	recorder func() *recording.Recorder
+	// charset is the server's terminal encoding; nil means UTF-8.
+	charset encoding.Encoding
 }
 
 type PTYSession struct {
@@ -51,13 +54,17 @@ func NewPTYSession(client *ssh.Client, emitter EventEmitter, connID string, cols
 		ssh.ECHO:          1,
 		ssh.TTY_OP_ISPEED: 14400,
 		ssh.TTY_OP_OSPEED: 14400,
-		ssh.IUTF8:         1,
+	}
+	if opts.charset == nil {
+		modes[ssh.IUTF8] = 1
 	}
 	if err := session.RequestPty("xterm-256color", rows, cols, modes); err != nil {
 		session.Close()
 		return nil, err
 	}
-	_ = session.Setenv("LANG", "en_US.UTF-8")
+	if opts.charset == nil {
+		_ = session.Setenv("LANG", "en_US.UTF-8")
+	}
 	_ = session.Setenv("COLORTERM", "truecolor")
 	if opts.forwardAgent {
 		_ = agent.RequestAgentForwarding(session)
@@ -90,8 +97,8 @@ func NewPTYSession(client *ssh.Client, emitter EventEmitter, connID string, cols
 
 	var wg sync.WaitGroup
 	wg.Add(2)
-	go func() { defer wg.Done(); streamUTF8(stdout, emit) }()
-	go func() { defer wg.Done(); streamUTF8(stderr, emit) }()
+	go func() { defer wg.Done(); streamUTF8(decodeReader(stdout, opts.charset), emit) }()
+	go func() { defer wg.Done(); streamUTF8(decodeReader(stderr, opts.charset), emit) }()
 
 	go func() {
 		waitErr := session.Wait()

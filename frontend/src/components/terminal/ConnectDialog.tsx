@@ -1,6 +1,10 @@
 import { useRef, useState } from 'react';
 import { ChevronRight, Folder, FolderOpen, KeyRound, Layers, Lock, PenLine, ShieldAlert, UserRound } from 'lucide-react';
 import { identitySummary, useIdentities } from '../../lib/identities';
+import { DEFAULT_HOST_OPTIONS, ENCODINGS, HOST_COLORS } from '../../lib/hostOptions';
+import { THEMES } from '../../lib/themes';
+import { useSSHKeys } from '../../lib/sshKeys';
+import type { HostOptions } from '../../types';
 import { Select } from '../ui/Select';
 import type { SavedTunnel, SSHProfile } from '../../types';
 import { JumpHostSelect, TunnelEditor } from './TunnelEditor';
@@ -62,7 +66,12 @@ export function ConnectDialog({ initial, folders, onClose, onConnect, onSwitchTo
   const [jumpProfileId, setJumpProfileId] = useState(initial?.jumpProfileId ?? '');
   const [tunnels, setTunnels] = useState<SavedTunnel[]>(initial?.tunnels ?? []);
   const [network, setNetwork] = useState(!!initial?.jumpProfileId || (initial?.tunnels?.length ?? 0) > 0);
+  const [options, setOptions] = useState<HostOptions>({ ...DEFAULT_HOST_OPTIONS, ...initial?.options });
+  const setOpt = (patch: Partial<HostOptions>) => setOptions((o) => ({ ...o, ...patch }));
+  const termCustomized = !!(options.color || options.startupCommands.trim() || options.encoding || options.themeId);
+  const [termOpen, setTermOpen] = useState(termCustomized);
   const identities = useIdentities();
+  const localKeys = useSSHKeys().keys;
   const [identityId, setIdentityId] = useState(initial?.identityId ?? '');
   const ident = identities.find((i) => i.id === identityId);
   const dialogs = useDialogs();
@@ -90,6 +99,7 @@ export function ConnectDialog({ initial, folders, onClose, onConnect, onSwitchTo
         clearPassword: !ident && forgetPassword && !password,
         keyPath: ident ? ident.keyPath : keyPath.trim(),
         identityId: ident ? ident.id : '',
+        options: { ...options, startupCommands: options.startupCommands.replace(/\s+$/, '') },
         folderId,
         allowLegacyAlgorithms: allowLegacy,
         agentForwarding,
@@ -226,6 +236,7 @@ export function ConnectDialog({ initial, folders, onClose, onConnect, onSwitchTo
               <div className="flex gap-2">
                 <input
                   className="input-field font-mono"
+                  list="terminyxx-key-files"
                   value={keyPath}
                   onChange={(e) => setKeyPath(e.target.value)}
                   placeholder="~/.ssh/id_ed25519"
@@ -239,6 +250,14 @@ export function ConnectDialog({ initial, folders, onClose, onConnect, onSwitchTo
           )}
           </>
         )}
+
+        <datalist id="terminyxx-key-files">
+          {localKeys.map((k) => (
+            <option key={k.path} value={k.path}>
+              {k.name}
+            </option>
+          ))}
+        </datalist>
 
         <div>
           <Toggle checked={sftpOnly} onChange={setSftpOnly} label="SFTP only (no shell access)" />
@@ -301,6 +320,79 @@ export function ConnectDialog({ initial, folders, onClose, onConnect, onSwitchTo
                 <TunnelEditor tunnels={tunnels} onChange={setTunnels} />
                 <p className="mt-1.5 text-2xs text-gray-600">Tunnels marked “Start with host” open when you connect. Others can be started from the status bar.</p>
               </div>
+            </div>
+          )}
+        </div>
+
+        <div>
+          <button
+            type="button"
+            className="flex items-center gap-1 text-[12px] text-gray-500 hover:text-gray-300 transition-colors"
+            onClick={() => setTermOpen((v) => !v)}
+            aria-expanded={termOpen}
+          >
+            <ChevronRight size={13} className={`transition-transform ${termOpen ? 'rotate-90' : ''}`} />
+            Terminal
+            {options.color && <span className="ml-1 w-2 h-2 rounded-full" style={{ background: HOST_COLORS.find((c) => c.id === options.color)?.value }} />}
+            {termCustomized && !options.color && <span className="ml-1 text-2xs text-accent">customized</span>}
+          </button>
+          {termOpen && (
+            <div className="mt-3 space-y-3 pl-4 animate-fade-in">
+              <div>
+                <span className="label">Color tag</span>
+                <div className="flex items-center gap-1.5" role="radiogroup" aria-label="Color tag">
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={!options.color}
+                    title="No color"
+                    className={`h-6 px-2 rounded-md text-2xs ${!options.color ? 'bg-white/[0.09] text-gray-200' : 'text-gray-500 hover:text-gray-300'}`}
+                    onClick={() => setOpt({ color: '' })}
+                  >
+                    None
+                  </button>
+                  {HOST_COLORS.map((c) => (
+                    <button
+                      key={c.id}
+                      type="button"
+                      role="radio"
+                      aria-checked={options.color === c.id}
+                      aria-label={c.label}
+                      title={c.label}
+                      className={`w-6 h-6 rounded-full transition-transform ${options.color === c.id ? 'ring-2 ring-offset-2 ring-offset-surface-raised scale-110' : 'opacity-70 hover:opacity-100'}`}
+                      style={{ background: c.value, ['--tw-ring-color' as string]: c.value }}
+                      onClick={() => setOpt({ color: c.id })}
+                    />
+                  ))}
+                </div>
+                <p className="mt-1.5 text-2xs text-gray-600">Marks this host's tabs and panes, for example red for production.</p>
+              </div>
+              {!sftpOnly && (
+                <>
+                  <div className="grid grid-cols-2 gap-2">
+                    <Field label="Theme">
+                      <Select
+                        value={options.themeId}
+                        onChange={(v) => setOpt({ themeId: v })}
+                        options={[{ value: '', label: 'App theme' }, ...THEMES.map((t) => ({ value: t.id, label: t.name }))]}
+                      />
+                    </Field>
+                    <Field label="Encoding">
+                      <Select value={options.encoding} onChange={(v) => setOpt({ encoding: v })} options={ENCODINGS} />
+                    </Field>
+                  </div>
+                  <Field label="Run after login" hint="One command per line, typed into the shell after every connect and reconnect.">
+                    <textarea
+                      className="input-field font-mono min-h-[64px] py-2 resize-y"
+                      rows={3}
+                      value={options.startupCommands}
+                      onChange={(e) => setOpt({ startupCommands: e.target.value })}
+                      placeholder={'sudo -i\ncd /var/www'}
+                      spellCheck={false}
+                    />
+                  </Field>
+                </>
+              )}
             </div>
           )}
         </div>

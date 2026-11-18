@@ -44,7 +44,7 @@ export function SyncSection() {
         dialogs.toast(`Updated the address of existing hosts: ${r.replaced.join(', ')}. Check them before connecting.`, 'error');
       }
       if (r.flagsReset > 0) {
-        dialogs.toast(`Agent forwarding and tunnel auto-start from the file were turned off on ${r.flagsReset} hosts. Turn them on again in the host settings if you trust them.`);
+        dialogs.toast(`Agent forwarding, tunnel auto-start and commands run after login from the file were turned off on ${r.flagsReset} hosts. Turn them on again in the host settings if you trust them.`);
       }
     } catch (e) {
       dialogs.toast(String(e).replace(/^Error: /, ''), 'error');

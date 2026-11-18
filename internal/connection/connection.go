@@ -3,6 +3,7 @@ package connection
 import (
 	"errors"
 	"fmt"
+	"golang.org/x/text/encoding"
 	"io"
 	"net"
 	"strconv"
@@ -64,6 +65,10 @@ type ManagedConnection struct {
 	// shellExited is set when the remote shell ended on its own (`exit`,
 	// logout), as opposed to the network or the server going away.
 	shellExited atomic.Bool
+	// charset is the server's terminal encoding (nil = UTF-8); startup is
+	// typed into the shell right after it starts.
+	charset encoding.Encoding
+	startup string
 }
 
 // dialSSH connects to req, going through req.Jump (ProxyJump) first. It
@@ -194,6 +199,10 @@ const LegacyAlgorithmsPrefix = "LEGACY_ALGORITHMS_REQUIRED"
 
 func newManagedConnection(req ConnectRequest, m *ConnectionManager) (*ManagedConnection, error) {
 	policy := m.Policy()
+	charset, err := lookupCharset(req.Encoding)
+	if err != nil {
+		return nil, err
+	}
 	client, jumps, err := dialSSH(req, m.hostKeys, policy)
 	if err != nil {
 		return nil, err
@@ -207,6 +216,8 @@ func newManagedConnection(req ConnectRequest, m *ConnectionManager) (*ManagedCon
 		stop:    make(chan struct{}),
 		gate:    m.gate,
 		mask:    m.maskOptions,
+		charset: charset,
+		startup: startupInput(req.Startup),
 	}
 	if req.AgentForwarding && policy.AllowAgentForwarding {
 		if conn := dialAgent(); conn != nil {
@@ -295,7 +306,7 @@ func (c *ManagedConnection) StartShell(cols, rows int) error {
 	}
 	c.noteSize(cols, rows)
 	client := c.client
-	opts := ptyOptions{gate: c.gate, mask: c.mask, forwardAgent: c.agentConn != nil, recorder: c.rec.Load}
+	opts := ptyOptions{gate: c.gate, mask: c.mask, forwardAgent: c.agentConn != nil, recorder: c.rec.Load, charset: c.charset}
 	pty, err := NewPTYSession(client, c.emitter, c.ID, cols, rows, opts, func(err error) {
 		// Shell exited (e.g. `exit`): drop the whole connection.
 		var exitErr *ssh.ExitError
@@ -308,7 +319,32 @@ func (c *ManagedConnection) StartShell(cols, rows int) error {
 		return fmt.Errorf("start shell: %w", err)
 	}
 	c.pty = pty
+	if c.startup != "" {
+		// The shell reads it as type-ahead once its prompt is up.
+		_, _ = pty.Write(encodeInput([]byte(c.startup), c.charset))
+	}
 	return nil
+}
+
+// maxStartup caps the commands typed after login.
+const maxStartup = 8 << 10
+
+// startupInput turns the saved startup commands into keystrokes: one line
+// per command, each ended with Enter; blank lines are dropped.
+func startupInput(s string) string {
+	if len(s) > maxStartup {
+		s = s[:maxStartup]
+	}
+	var b strings.Builder
+	for _, line := range strings.Split(strings.ReplaceAll(s, "\r\n", "\n"), "\n") {
+		line = strings.TrimRight(line, "\r")
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		b.WriteString(line)
+		b.WriteByte('\r')
+	}
+	return b.String()
 }
 
 func (c *ManagedConnection) WriteInput(data string) error {
@@ -318,7 +354,7 @@ func (c *ManagedConnection) WriteInput(data string) error {
 	if pty == nil {
 		return errors.New("shell not started")
 	}
-	_, err := pty.Write([]byte(data))
+	_, err := pty.Write(encodeInput([]byte(data), c.charset))
 	return err
 }
 

@@ -173,6 +173,16 @@ func (a *App) SSHConnect(req connection.ConnectRequest) error {
 			}
 		}
 	}
+	// Terminal charset and startup commands always come from the saved host.
+	req.Encoding, req.Startup = "", ""
+	if req.JumpFor != "" && a.data != nil {
+		if p, err := a.data.GetSSHProfile(req.JumpFor); err == nil {
+			req.Encoding = p.Options.Encoding
+			if !p.SFTPOnly {
+				req.Startup = p.Options.StartupCommands
+			}
+		}
+	}
 	if req.JumpFor != "" && a.data != nil && len(req.Jump) == 0 {
 		jump, err := a.resolveJumpChain(req.JumpFor)
 		if err != nil {

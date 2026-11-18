@@ -51,6 +51,11 @@ type ConnectRequest struct {
 	// JumpFor is the saved host whose jump chain (and auto-start tunnels)
 	// applies; unlike ProfileID it is kept when the password is re-entered.
 	JumpFor string `json:"jumpFor"`
+	// Encoding is the server's terminal charset ("" = UTF-8); see charsets.
+	Encoding string `json:"encoding"`
+	// Startup is typed into the shell once it has started, on every
+	// connect. App.SSHConnect fills both from the saved host.
+	Startup string `json:"startup"`
 }
 
 type FileEntry struct {

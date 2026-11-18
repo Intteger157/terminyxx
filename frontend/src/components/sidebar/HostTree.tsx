@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { hostTagColor } from '../../lib/hostOptions';
 import type { DragEvent, ReactNode } from 'react';
 import { ProtoBadge } from './ProtoBadge';
 import { ChevronRight, Folder as FolderIcon, FolderOpen, Monitor, MoreHorizontal } from 'lucide-react';
@@ -178,6 +179,9 @@ export function HostTree({ tree, rootId = '', connected, collapsed, onToggle, re
           <span className="min-w-0 flex-1">
             <span className="flex items-center gap-1.5 min-w-0 leading-tight">
               <span className="text-[12.5px] font-medium text-gray-200 truncate">{h.name}</span>
+              {h.kind === 'ssh' && hostTagColor(h.profile) && (
+                <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: hostTagColor(h.profile) }} title="Color tag" />
+              )}
               <ProtoBadge host={h} />
             </span>
             <span className="block text-2xs text-gray-500 truncate">{h.detail}</span>

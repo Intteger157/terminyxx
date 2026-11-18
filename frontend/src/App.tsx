@@ -20,6 +20,7 @@ import { setBroadcastPanes, toggleBroadcast, useBroadcast } from './lib/broadcas
 import { SnippetsDialog } from './components/snippets/SnippetsDialog';
 import { StreamDialog } from './components/terminal/StreamDialog';
 import { ContainersDialog } from './components/terminal/ContainersDialog';
+import { InstallKeyDialog } from './components/terminal/InstallKeyDialog';
 import { setInitialInput } from './lib/initialInput';
 import { StreamConnect } from '../wailsjs/go/main/App';
 import { connection } from '../wailsjs/go/models';
@@ -88,6 +89,7 @@ function App() {
   const [recordingsOpen, setRecordingsOpen] = useState(false);
   const [streamDialog, setStreamDialog] = useState<'telnet' | 'serial' | null>(null);
   const [containersFor, setContainersFor] = useState<string | null>(null);
+  const [installKeyFor, setInstallKeyFor] = useState<string | null>(null);
   const broadcast = useBroadcast();
   const [settingsOpen, setSettingsOpen] = useState<SettingsSection | null>(null);
   const [sidebar, setSidebar] = useState<SidebarPref>(readSidebarPref);
@@ -158,6 +160,15 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [platform, lock.locked]);
 
+  // Tabs keep the profile they connected with; show the host's current color tag.
+  const shownTabs = useMemo(
+    () =>
+      tabs.map((t) => {
+        const saved = t.profile && sshProfiles.find((p) => p.id === t.profile!.id);
+        return saved && saved.options !== t.profile!.options ? { ...t, profile: { ...t.profile!, options: saved.options } } : t;
+      }),
+    [tabs, sshProfiles]
+  );
   const activeTab = tabs.find((t) => t.id === activeTabId) ?? null;
   const activeGroup = groups.find((g) => activeTabId && contains(g.root, activeTabId)) ?? null;
   const isSplit = !!activeGroup && activeGroup.root.kind === 'split';
@@ -818,6 +829,10 @@ function App() {
     ...(groups.length > 0
       ? [{ id: 'ws-save', group: 'Actions', label: 'Save open tabs as workspace…', icon: <LayoutGrid size={14} />, keywords: 'workspace layout session save', run: () => void saveAsWorkspace() } as PaletteItem]
       : []),
+    ...(activeTab?.status === 'connected' && activeTab.profile
+      ? [{ id: 'install-key', group: 'Actions', label: 'Install SSH public key on this server', icon: <SquareTerminal size={14} />, keywords: 'ssh-copy-id authorized_keys key login passwordless', run: () => setInstallKeyFor(activeTab.id) } as PaletteItem]
+      : []),
+    { id: 'keys', group: 'Actions', label: 'SSH keys (generate, agent)', icon: <Settings size={14} />, keywords: 'ssh-keygen ed25519 key agent ssh-add public', run: () => setSettingsOpen('keys') },
     { id: 'identities', group: 'Actions', label: 'Identities (shared logins)', icon: <Settings size={14} />, keywords: 'credentials user password key login account', run: () => setSettingsOpen('identities') },
     { id: 'new', group: 'Actions', label: 'New SSH connection', icon: <Plus size={14} />, shortcut: [mod, '⇧', 'T'], run: () => openConnectDialog(null) },
     { id: 'rdp', group: 'Actions', label: 'New RDP profile', icon: <Monitor size={14} />, run: () => openRdpDialog() },
@@ -875,7 +890,7 @@ function App() {
     >
       <TitleBar
         platform={platform}
-        tabs={tabs}
+        tabs={shownTabs}
         groups={groups}
         activeTabId={activeTabId}
         sidebarOpen={!sidebar.rail}
@@ -909,7 +924,7 @@ function App() {
 
         <main className="flex flex-col flex-1 min-w-0 gap-2 pr-2">
           <SplitView
-            tabs={tabs}
+            tabs={shownTabs}
             groups={groups}
             activeTabId={activeTabId}
             empty={
@@ -979,6 +994,7 @@ function App() {
                     connected={tab.status === 'connected'}
                     menuExtras={paneEntries(tab.id)}
                     hostLabel={tab.profile ? `${tab.profile.username}@${tab.profile.host}` : tab.host}
+                    themeId={(sshProfiles.find((p) => p.id === tab.profile?.id) ?? tab.profile)?.options?.themeId}
                     onSize={(cols, rows) => setSizes((s) => ({ ...s, [tab.id]: { cols, rows } }))}
                   />
                   {tab.status !== 'connected' && <StatusOverlay tab={tab} onReconnect={() => handleReconnect(tab)} onCancelRetry={() => cancelRetry(tab.id)} />}
@@ -1065,6 +1081,30 @@ function App() {
       {(() => {
         const t = tabs.find((x) => x.id === containersFor);
         return t ? <ContainersDialog tab={t} onClose={() => setContainersFor(null)} onOpen={(c) => void openExec(t, c)} /> : null;
+      })()}
+
+      {(() => {
+        const t = tabs.find((x) => x.id === installKeyFor);
+        if (!t) return null;
+        return (
+          <InstallKeyDialog
+            tab={t}
+            saved={sshProfiles.find((p) => p.id === t.profile?.id)}
+            onClose={() => setInstallKeyFor(null)}
+            onGenerate={() => {
+              setInstallKeyFor(null);
+              setSettingsOpen('keys');
+            }}
+            onUseKey={(p, key) => {
+              SaveSSHProfile(sshForSave({ ...p, password: '', authType: 'key', keyPath: key.path }))
+                .then(() => {
+                  dialogs.toast(`${p.name} now logs in with ${key.name}`, 'success');
+                  return loadProfiles();
+                })
+                .catch((err) => dialogs.toast(`Host not updated: ${errorText(err)}`, 'error'));
+            }}
+          />
+        );
       })()}
 
       {recordingsOpen && <RecordingsDialog onClose={() => setRecordingsOpen(false)} />}
