@@ -229,18 +229,25 @@ export function XTermWrapper({ connectionId, visible, focused, connected, menuEx
     };
     container.addEventListener('paste', onNativePaste, true);
 
-    let lastSize = '';
+    // Every size change reaches the PTY, whichever fit() caused it (font
+    // load, tab switch, shell start, the observer below). A fit that only
+    // happened elsewhere used to leave the PTY at a stale size, e.g. the
+    // tiny one a reconnect started the new shell with.
+    term.onResize(({ cols, rows }) => {
+      onSizeRef.current?.(cols, rows);
+      SSHResizePTY(connectionId, cols, rows).catch(() => {});
+    });
+    let reported = false;
     let frame = 0;
     const resize = () => {
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(() => {
         if (!container.offsetParent) return; // hidden tab
         fit.fit();
-        const size = `${term.cols}x${term.rows}`;
-        if (size !== lastSize) {
-          lastSize = size;
+        if (!reported) {
+          // xterm fires onResize only on a change; report the first size.
+          reported = true;
           onSizeRef.current?.(term.cols, term.rows);
-          SSHResizePTY(connectionId, term.cols, term.rows).catch(() => {});
         }
       });
     };
@@ -280,6 +287,9 @@ export function XTermWrapper({ connectionId, visible, focused, connected, menuEx
     startedOnce.current = true;
     SSHStartShell(connectionId, term.cols, term.rows)
       .then(() => {
+        // Resizes sent while the shell was starting were dropped (no PTY
+        // yet); give the new PTY the terminal's current size.
+        if (termRef.current === term) SSHResizePTY(connectionId, term.cols, term.rows).catch(() => {});
         // e.g. `docker exec` for a pane opened from the container picker
         const first = takeInitialInput(connectionId);
         if (first) SSHWriteInput(connectionId, first).catch(() => {});
