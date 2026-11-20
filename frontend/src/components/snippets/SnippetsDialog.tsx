@@ -5,6 +5,7 @@ import { Field, Toggle } from '../terminal/ConnectDialog';
 import { fillSnippet, sendSnippet, snippetVars, type Snippet } from '../../lib/snippets';
 import { DeleteSnippet, ListSnippets, SaveSnippet } from '../../../wailsjs/go/main/App';
 import { store } from '../../../wailsjs/go/models';
+import { ComboInput } from '../ui/ComboInput';
 
 interface Props {
   /** Pane that receives the snippet; null when no terminal is open. */
@@ -155,12 +156,7 @@ function EditForm({ snippet, groups, onClose, onBack, onSave }: { snippet: Snipp
             <input className="input-field" value={s.name} onChange={(e) => set({ name: e.target.value })} required autoFocus />
           </Field>
           <Field label="Group">
-            <input className="input-field" list="snippet-groups" value={s.group} onChange={(e) => set({ group: e.target.value })} placeholder="optional" />
-            <datalist id="snippet-groups">
-              {groups.map((g) => (
-                <option key={g} value={g} />
-              ))}
-            </datalist>
+            <ComboInput value={s.group} onChange={(group) => set({ group })} options={groups.map((g) => ({ value: g }))} placeholder="optional" />
           </Field>
         </div>
         <Field label="Command" hint="One or more lines. Placeholders: {{name}}, {{name:default}}. Built in: {{host}}, {{user}}.">

@@ -14,6 +14,7 @@ import { Modal, useDialogs } from '../ui/Dialogs';
 import { confirmAgentForwarding } from '../security/securityPrompts';
 import { useSettings } from '../../lib/settings';
 import { SelectKeyFile } from '../../../wailsjs/go/main/App';
+import { ComboInput } from '../ui/ComboInput';
 
 interface ConnectDialogProps {
   initial?: Partial<SSHProfile>;
@@ -268,11 +269,12 @@ export function ConnectDialog({ initial, folders, onClose, onConnect, onSwitchTo
           ) : (
             <Field label="Private key" hint="Leave empty to use the default keys in ~/.ssh">
               <div className="flex gap-2">
-                <input
+                <ComboInput
                   className="input-field font-mono"
-                  list="terminyxx-key-files"
+                  mono
                   value={keyPath}
-                  onChange={(e) => setKeyPath(e.target.value)}
+                  onChange={setKeyPath}
+                  options={localKeys.map((k) => ({ value: k.path, label: k.name }))}
                   placeholder="~/.ssh/id_ed25519"
                   spellCheck={false}
                 />
@@ -285,13 +287,6 @@ export function ConnectDialog({ initial, folders, onClose, onConnect, onSwitchTo
           </>
         )}
 
-        <datalist id="terminyxx-key-files">
-          {localKeys.map((k) => (
-            <option key={k.path} value={k.path}>
-              {k.name}
-            </option>
-          ))}
-        </datalist>
 
         <div>
           <Toggle checked={sftpOnly} onChange={setSftpOnly} label="SFTP only (no shell access)" />

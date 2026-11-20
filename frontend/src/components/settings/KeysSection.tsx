@@ -10,6 +10,7 @@ import { GenerateSSHKey } from '../../../wailsjs/go/main/App';
 import { updateSecurity, useSettings } from '../../lib/settings';
 import type { AgentSource } from '../../lib/settings';
 import { usePlatform } from '../../lib/hosts';
+import { Select } from '../ui/Select';
 
 export function KeysSection() {
   const { keys, agent, loading, error, reload } = useSSHKeys();
@@ -134,20 +135,14 @@ function AgentPicker({ onChanged }: { onChanged: () => void }) {
     <div className="mb-4 space-y-2">
       <div className="grid grid-cols-2 gap-2">
         <Field label="Get keys from">
-          <select
-            className="input-field"
+          <Select
             value={ssh.agent}
-            onChange={(e) => {
-              updateSecurity('ssh', { agent: e.target.value as AgentSource });
+            options={sources.map((s) => ({ value: s, label: AGENT_LABELS[s] }))}
+            onChange={(v) => {
+              updateSecurity('ssh', { agent: v as AgentSource });
               onChanged();
             }}
-          >
-            {sources.map((s) => (
-              <option key={s} value={s}>
-                {AGENT_LABELS[s]}
-              </option>
-            ))}
-          </select>
+          />
         </Field>
         {ssh.agent === 'custom' && (
           <Field label="Path">

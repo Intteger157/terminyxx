@@ -32,8 +32,8 @@ export function TunnelsPopover({ tab }: { tab: TerminalTab }) {
     const onDown = (e: MouseEvent) => {
       if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
     };
-    document.addEventListener('mousedown', onDown);
-    return () => document.removeEventListener('mousedown', onDown);
+    document.addEventListener('mousedown', onDown, true); // capture: the title bar stops mousedown from bubbling
+    return () => document.removeEventListener('mousedown', onDown, true);
   }, [open]);
 
   const start = async (t: SavedTunnel) => {

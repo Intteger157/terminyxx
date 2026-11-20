@@ -409,10 +409,10 @@ function Flyout({ top, node, onClose, children }: { top: number; node: FolderNod
       if (!ref.current?.contains(e.target as Node) && !(e.target as HTMLElement).closest?.('.z-\\[80\\]')) onClose();
     };
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
-    window.addEventListener('mousedown', onDown);
+    window.addEventListener('mousedown', onDown, true); // capture: some areas stop mousedown from bubbling
     window.addEventListener('keydown', onKey);
     return () => {
-      window.removeEventListener('mousedown', onDown);
+      window.removeEventListener('mousedown', onDown, true);
       window.removeEventListener('keydown', onKey);
     };
   }, [onClose]);

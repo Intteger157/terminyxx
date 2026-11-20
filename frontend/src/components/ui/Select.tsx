@@ -38,8 +38,8 @@ export function Select({ value, options, onChange, placeholder, className = '' }
       const t = e.target as Node;
       if (!rootRef.current?.contains(t) && !listRef.current?.contains(t)) setOpen(false);
     };
-    window.addEventListener('mousedown', onDown);
-    return () => window.removeEventListener('mousedown', onDown);
+    window.addEventListener('mousedown', onDown, true); // capture: dialogs stop mousedown from bubbling
+    return () => window.removeEventListener('mousedown', onDown, true);
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // The list lives in a portal (fixed position) so dialogs with scrolling
