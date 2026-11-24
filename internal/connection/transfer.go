@@ -110,10 +110,16 @@ func (b *SFTPBridge) Transfer(ctx context.Context, req TransferRequest, connID s
 	}()
 
 	var items []transferItem
+	var downloadRoot *os.Root
 	switch req.Direction {
 	case "upload":
 		items, err = b.planUpload(req)
 	case "download":
+		downloadRoot, err = os.OpenRoot(req.DestDir)
+		if err != nil {
+			return fmt.Errorf("open download directory: %w", err)
+		}
+		defer downloadRoot.Close()
 		items, err = b.planDownload(req)
 	default:
 		return fmt.Errorf("unknown direction %q", req.Direction)
@@ -139,7 +145,7 @@ func (b *SFTPBridge) Transfer(ctx context.Context, req TransferRequest, connID s
 			if req.Direction == "upload" {
 				err = b.client.MkdirAll(it.dst)
 			} else {
-				err = os.MkdirAll(it.dst, 0o755)
+				err = downloadRoot.MkdirAll(it.dst, 0o755)
 			}
 			if err != nil {
 				return fmt.Errorf("mkdir %s: %w", it.dst, err)
@@ -151,7 +157,7 @@ func (b *SFTPBridge) Transfer(ctx context.Context, req TransferRequest, connID s
 		if req.Direction == "upload" {
 			err = b.uploadFile(ctx, it, tracker)
 		} else {
-			err = b.downloadFile(ctx, it, tracker)
+			err = b.downloadFile(ctx, downloadRoot, it, tracker)
 		}
 		if err != nil {
 			return fmt.Errorf("%s: %w", it.src, err)
@@ -218,7 +224,12 @@ func (b *SFTPBridge) planDownload(req TransferRequest) ([]transferItem, error) {
 	var items []transferItem
 	for _, src := range req.Sources {
 		src = path.Clean(src)
-		root := filepath.Join(req.DestDir, path.Base(src))
+		root := path.Base(src)
+		if src == "/" {
+			root = "."
+		} else if err := checkDownloadName(root); err != nil {
+			return nil, err
+		}
 		walker := b.client.Walk(src)
 		for walker.Step() {
 			if err := walker.Err(); err != nil {
@@ -261,11 +272,9 @@ func downloadTarget(root, src, p string) (string, error) {
 	default:
 		return "", fmt.Errorf("server returned a path outside %s: %q", src, p)
 	}
-	if goruntime.GOOS == "windows" {
-		for _, part := range strings.Split(rel, "/") {
-			if unsafeWindowsName(part) {
-				return "", fmt.Errorf("refusing unsafe file name from server: %q", rel)
-			}
+	for _, part := range strings.Split(rel, "/") {
+		if err := checkDownloadName(part); err != nil {
+			return "", err
 		}
 	}
 	dst := filepath.Join(root, filepath.FromSlash(rel))
@@ -274,6 +283,14 @@ func downloadTarget(root, src, p string) (string, error) {
 		return "", fmt.Errorf("refusing unsafe file name from server: %q", rel)
 	}
 	return dst, nil
+}
+
+func checkDownloadName(name string) error {
+	if name == "" || name == "." || name == ".." || strings.ContainsRune(name, 0) ||
+		goruntime.GOOS == "windows" && (strings.ContainsRune(name, '\\') || unsafeWindowsName(name)) {
+		return fmt.Errorf("refusing unsafe file name from server: %q", name)
+	}
+	return nil
 }
 
 // windowsReserved are device names Windows resolves in any folder
@@ -348,8 +365,7 @@ func (b *SFTPBridge) uploadFile(ctx context.Context, it transferItem, t *progres
 	if err := b.client.MkdirAll(path.Dir(it.dst)); err != nil {
 		return err
 	}
-	tmp := path.Join(path.Dir(it.dst), ".terminyxx-"+rand.Text()+".part")
-	dst, err := b.client.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL)
+	tmp, dst, err := b.openRemoteTemp(it.dst)
 	if err != nil {
 		return err
 	}
@@ -378,6 +394,12 @@ func (b *SFTPBridge) uploadFile(ctx context.Context, it transferItem, t *progres
 	return nil
 }
 
+func (b *SFTPBridge) openRemoteTemp(target string) (string, *sftp.File, error) {
+	tmp := path.Join(path.Dir(target), ".terminyxx-"+rand.Text()+".part")
+	f, err := b.client.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL)
+	return tmp, f, err
+}
+
 func (b *SFTPBridge) publishUpload(ctx context.Context, tmp, target string) error {
 	info, err := b.client.Lstat(target)
 	if ctxErr := ctx.Err(); ctxErr != nil {
@@ -393,6 +415,10 @@ func (b *SFTPBridge) publishUpload(ctx context.Context, tmp, target string) erro
 	if err != nil {
 		return err
 	}
+	return b.replaceUpload(tmp, target)
+}
+
+func (b *SFTPBridge) replaceUpload(tmp, target string) error {
 	if _, ok := b.client.HasExtension("posix-rename@openssh.com"); !ok {
 		return errors.New("the SFTP server does not support safe replacement of existing files")
 	}
@@ -406,18 +432,18 @@ func (b *SFTPBridge) publishUpload(ctx context.Context, tmp, target string) erro
 	return nil
 }
 
-func (b *SFTPBridge) downloadFile(ctx context.Context, it transferItem, t *progressTracker) error {
+func (b *SFTPBridge) downloadFile(ctx context.Context, root *os.Root, it transferItem, t *progressTracker) error {
 	src, err := b.client.Open(it.src)
 	if err != nil {
 		return err
 	}
 	defer src.Close()
 
-	if err := os.MkdirAll(filepath.Dir(it.dst), 0o755); err != nil {
+	if err := root.MkdirAll(filepath.Dir(it.dst), 0o755); err != nil {
 		return err
 	}
 	mode := downloadMode(it)
-	info, err := os.Lstat(it.dst)
+	info, err := root.Lstat(it.dst)
 	if err == nil {
 		if !info.Mode().IsRegular() {
 			return fmt.Errorf("cannot replace a non-regular file: %s", it.dst)
@@ -429,14 +455,14 @@ func (b *SFTPBridge) downloadFile(ctx context.Context, it transferItem, t *progr
 		return err
 	}
 	tmp := filepath.Join(filepath.Dir(it.dst), ".terminyxx-"+rand.Text()+".part")
-	dst, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
+	dst, err := root.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
 	if err != nil {
 		return err
 	}
 	defer func() {
 		if tmp != "" {
 			_ = dst.Close()
-			_ = os.Remove(tmp)
+			_ = root.Remove(tmp)
 		}
 	}()
 	if info == nil {
@@ -451,23 +477,26 @@ func (b *SFTPBridge) downloadFile(ctx context.Context, it transferItem, t *progr
 		return err
 	}
 	written, err := src.WriteTo(&countingWriter{ctx: ctx, w: dst, t: t})
+	if err == nil && written != it.size {
+		err = errors.New("the source size changed during the transfer")
+	}
+	if err == nil {
+		err = ctx.Err()
+	}
+	if err == nil {
+		err = dst.Chmod(mode)
+	}
 	if cerr := dst.Close(); err == nil {
 		err = cerr
 	}
 	if err != nil {
 		return err
 	}
-	if written != it.size {
-		return errors.New("the source size changed during the transfer")
-	}
-	if err := os.Chmod(tmp, mode); err != nil {
-		return err
-	}
-	_ = os.Chtimes(tmp, it.mtime, it.mtime)
+	_ = root.Chtimes(tmp, it.mtime, it.mtime)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := os.Rename(tmp, it.dst); err != nil {
+	if err := root.Rename(tmp, it.dst); err != nil {
 		return err
 	}
 	tmp = ""

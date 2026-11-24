@@ -1,8 +1,12 @@
 package connection
 
 import (
+	"io"
+	"os"
 	"strings"
 	"testing"
+
+	"github.com/pkg/sftp"
 )
 
 func TestRemoteEdit(t *testing.T) {
@@ -84,5 +88,39 @@ func TestRemoteEditRefusals(t *testing.T) {
 	}
 	if _, err := m.ReadForEdit("e", "/missing"); err == nil {
 		t.Error("missing file accepted")
+	}
+}
+
+type readOnlyDirectoryWriter struct{ sftp.FileWriter }
+
+func (w readOnlyDirectoryWriter) Filewrite(req *sftp.Request) (io.WriterAt, error) {
+	if req.Filepath != "/document.txt" {
+		return nil, os.ErrPermission
+	}
+	return w.FileWriter.Filewrite(req)
+}
+
+func TestRemoteEditPreservesOriginalIfStagingIsDenied(t *testing.T) {
+	s := newTestServer(t, serverOpts{password: "secret", wrapWriter: func(w sftp.FileWriter) sftp.FileWriter {
+		return readOnlyDirectoryWriter{w}
+	}})
+	m, _, _ := newManager(t)
+	connectTrusted(t, m, passwordReq(s, "edit"))
+	b, err := m.sftp("edit")
+	must(t, err)
+	f, err := b.client.Create("/document.txt")
+	must(t, err)
+	_, err = f.Write([]byte("original"))
+	must(t, err)
+	must(t, f.Close())
+	file, err := b.ReadForEdit("/document.txt")
+	must(t, err)
+	if _, err := b.WriteEdited("/document.txt", "revision", file.Version, false); err == nil {
+		t.Fatal("save succeeded without a staged file")
+	}
+	got, err := b.ReadForEdit("/document.txt")
+	must(t, err)
+	if got.Content != file.Content {
+		t.Fatalf("original was modified: %q", got.Content)
 	}
 }

@@ -24,7 +24,7 @@ const LOCKED = 'app is locked';
 const DIAGNOSTIC = '\nSSH_DIAGNOSTIC|';
 
 function splitSSHError(err: unknown): { message: string; diagnostic?: connection.SSHDiagnostic } {
-  const text = String(err);
+  const text = String(err).replace(/^Error: /, '');
   const marker = text.lastIndexOf(DIAGNOSTIC);
   if (marker === -1) return { message: text };
   try {
@@ -57,6 +57,7 @@ export async function connectWithPrompts(
   const interactive = opts.interactive !== false;
   const result: ConnectResult = { rememberPassword: false };
   let diagnostic: connection.SSHDiagnostic | undefined;
+  const confirmedHostKeys = new Set<string>();
   /** In quiet mode every question to the user ends the attempt instead. */
   const needUser = (why: string) => {
     if (!interactive) throw new ConnectNeedsUser(why, diagnostic);
@@ -93,6 +94,7 @@ export async function connectWithPrompts(
     keyPath: profile.keyPath,
     passphrase: '',
     acceptHostKey: '',
+    acceptHostKeyAddress: '',
     replaceHostKey: false,
     // Saved hosts: the backend reads the password from the OS keychain.
     profileId: profile.hasPassword ? profile.id : '',
@@ -102,7 +104,7 @@ export async function connectWithPrompts(
   };
   if (needsPassword) req.password = await askPassword(false);
 
-  for (let attempt = 0; attempt < 6; attempt++) {
+  for (let attempt = 0; attempt < 12; attempt++) {
     try {
       await SSHConnect(connection.ConnectRequest.createFrom({ ...req, jump: [] }));
       return result;
@@ -126,23 +128,19 @@ export async function connectWithPrompts(
 
       if (msg.includes(LOCKED)) throw new ConnectCancelled();
 
-      if (msg.includes(HOSTKEY_UNKNOWN)) {
-        needUser('the host key is not trusted yet');
-        const [, host, keyType, fp] = msg.slice(msg.indexOf(HOSTKEY_UNKNOWN)).split('|');
-        if (!(await confirmNewHostKey(dialogs, host, keyType, fp))) throw new ConnectCancelled();
+      if (msg.startsWith(HOSTKEY_UNKNOWN) || msg.startsWith(HOSTKEY_MISMATCH)) {
+        const replace = msg.startsWith(HOSTKEY_MISMATCH);
+        needUser(replace ? 'the host key has changed' : 'the host key is not trusted yet');
+        const [, host, keyType, fp, known = ''] = msg.split('|');
+        if (confirmedHostKeys.has(msg)) throw new SSHConnectFailure('The confirmed SSH host key could not be trusted', report);
+        const accepted = replace
+          ? await confirmChangedHostKey(dialogs, host, keyType, fp, known.split(';').filter(Boolean))
+          : await confirmNewHostKey(dialogs, host, keyType, fp);
+        if (!accepted) throw new ConnectCancelled();
+        confirmedHostKeys.add(msg);
         req.acceptHostKey = fp;
-        continue;
-      }
-
-      if (msg.includes(HOSTKEY_MISMATCH)) {
-        needUser('the host key has changed');
-        // HOSTKEY_MISMATCH|host|type|fingerprint|type fp;type fp
-        const [, host, keyType, fp, known = ''] = msg.slice(msg.indexOf(HOSTKEY_MISMATCH)).split('|');
-        if (req.replaceHostKey || !(await confirmChangedHostKey(dialogs, host, keyType, fp, known.split(';').filter(Boolean)))) {
-          throw new ConnectCancelled();
-        }
-        req.acceptHostKey = fp;
-        req.replaceHostKey = true;
+        req.acceptHostKeyAddress = host;
+        req.replaceHostKey = replace;
         continue;
       }
 

@@ -24,7 +24,7 @@ type SSHCheck struct {
 // It closes all clients and does not open a shell or start forwarding.
 func (m *ConnectionManager) TestSSH(req ConnectRequest) SSHDiagnostic {
 	var report SSHDiagnostic
-	req.AcceptHostKey, req.ReplaceHostKey = "", false
+	req.AcceptHostKey, req.AcceptHostKeyAddress, req.ReplaceHostKey = "", "", false
 	client, jumps, err := dialSSH(req, m.hostKeys, m.Policy(), &report)
 	if err == nil {
 		_ = client.Close()

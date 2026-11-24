@@ -77,13 +77,19 @@ export function InventoriesDialog({ onClose, onSynced }: { onClose: () => void; 
           break;
         } catch (err) {
           const text = errorText(err);
-          const m = text.match(/INVCERT_UNKNOWN\|([0-9a-f]{64})\|(.*)$/);
+          const m = text.match(/^INVCERT_UNKNOWN\|([0-9a-f]{64})\|(.*)$/);
           if (!m || attempt > 0) throw err;
           const fp = m[1];
+          const changed = !!inv.config.fingerprint;
+          const reason = changed
+            ? 'The certificate fingerprint differs from the one saved for this inventory.'
+            : 'The certificate could not be verified for the configured address.';
           const ok = await dialogs.confirm({
-            title: 'Untrusted certificate',
-            message: `The server's certificate is not signed by a trusted authority (Proxmox uses its own by default).\n\n${m[2]}\nSHA-256 ${fp.match(/.{2}/g)!.join(':')}\n\nCompare this with the fingerprint in Proxmox (Datacenter → node → Certificates) before you trust it.`,
-            confirmLabel: 'Trust and refresh',
+            title: changed ? 'Proxmox certificate changed' : 'Unverified Proxmox certificate',
+            message: `${reason}\n\n${inv.config.url}\n${m[2]}\nSHA-256 ${fp.match(/.{2}/g)!.join(':')}\n\nCompare this with the fingerprint in Proxmox (Datacenter → node → Certificates) before you trust it.`,
+            confirmLabel: changed ? 'Replace and refresh' : 'Trust and refresh',
+            danger: changed,
+            focusCancel: true,
           });
           if (!ok) return;
           await SaveInventory(store.Inventory.createFrom({ ...inv, secret: '', config: { ...inv.config, fingerprint: fp } }));

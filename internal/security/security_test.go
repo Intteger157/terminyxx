@@ -122,6 +122,7 @@ type memVault struct {
 
 func (m *memVault) Unseal(d []byte)       { m.dek, m.hasKey = d, true }
 func (m *memVault) Seal()                 { m.dek, m.hasKey = nil, false }
+func (m *memVault) Migrate() error        { return nil }
 func (m *memVault) Enable(d []byte) error { m.dek, m.hasKey, m.enabled = d, true, true; return nil }
 func (m *memVault) Disable() error {
 	if !m.hasKey {

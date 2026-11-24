@@ -34,6 +34,8 @@ type ConnectRequest struct {
 	// AcceptHostKey is the SHA256 fingerprint of a host key the user has
 	// confirmed. It is appended to known_hosts when the server presents it.
 	AcceptHostKey string `json:"acceptHostKey"`
+	// AcceptHostKeyAddress is the confirmed host:port, including IPv6 brackets.
+	AcceptHostKeyAddress string `json:"acceptHostKeyAddress"`
 	// ReplaceHostKey, together with AcceptHostKey, replaces a changed host
 	// key the user explicitly chose to trust after the mismatch warning.
 	ReplaceHostKey bool `json:"replaceHostKey"`

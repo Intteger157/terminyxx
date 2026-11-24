@@ -6,8 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path"
-	"time"
+	"strings"
 	"unicode/utf8"
 )
 
@@ -20,6 +19,8 @@ const EditConflictPrefix = "EDIT_CONFLICT"
 
 // ErrNotText is returned for files the editor cannot round-trip safely.
 var ErrNotText = errors.New("this file is not UTF-8 text, so it cannot be edited here")
+
+var errEditConflict = errors.New(EditConflictPrefix + "|the file was changed on the server after you opened it")
 
 // EditFile is a remote text file opened for editing.
 type EditFile struct {
@@ -70,64 +71,76 @@ func (b *SFTPBridge) ReadForEdit(p string) (EditFile, error) {
 }
 
 // WriteEdited saves content. Unless force is set it first checks that the
-// file still has the version the editor loaded. The data goes to a temporary
-// file that then replaces the original, so a dropped connection never leaves
-// a half-written file; if the directory is not writable it falls back to
-// overwriting in place. It returns the new version.
+// file still has the version the editor loaded. It publishes the staged
+// contents only after writing and closing the temporary file successfully.
 func (b *SFTPBridge) WriteEdited(p, content, version string, force bool) (string, error) {
+	if len(content) > maxEditBytes {
+		return "", fmt.Errorf("file is larger than %d MB", maxEditBytes>>20)
+	}
+	if strings.IndexByte(content, 0) >= 0 || !utf8.ValidString(content) {
+		return "", ErrNotText
+	}
 	real, err := b.client.RealPath(p) // saving through a symlink edits its target
 	if err != nil {
 		real = p
 	}
-	info, err := b.client.Stat(real)
+	info, err := b.client.Lstat(real)
 	if err != nil {
 		return "", err
 	}
+	if !info.Mode().IsRegular() {
+		return "", errors.New("only regular files can be edited")
+	}
 	if !force && version != "" && versionOf(info) != version {
-		return "", fmt.Errorf("%s|the file was changed on the server after you opened it", EditConflictPrefix)
+		return "", errEditConflict
 	}
 
-	tmp := path.Join(path.Dir(real), fmt.Sprintf(".%s.terminyxx-%d.tmp", path.Base(real), time.Now().UnixNano()))
-	if err := b.writeFile(tmp, content, info.Mode().Perm(), true); err == nil {
-		if err := b.client.PosixRename(tmp, real); err != nil {
-			if err := b.client.Rename(tmp, real); err != nil {
-				_ = b.client.Remove(tmp)
-				return "", err
-			}
+	tmp, f, err := b.openRemoteTemp(real)
+	if err != nil {
+		return "", fmt.Errorf("could not stage the file in its directory: %w", err)
+	}
+	defer func() {
+		if tmp != "" {
+			_ = b.client.Remove(tmp)
 		}
-	} else {
-		_ = b.client.Remove(tmp)
-		if err := b.writeFile(real, content, 0, false); err != nil {
-			return "", err
+	}()
+	if err := f.Chmod(0o600); err != nil {
+		if err := b.client.Chmod(tmp, 0o600); err != nil {
+			_ = f.Close()
+			return "", fmt.Errorf("could not protect the temporary file: %w", err)
 		}
 	}
+	n, err := f.Write([]byte(content))
+	if closeErr := f.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return "", err
+	}
+	if n != len(content) {
+		return "", io.ErrShortWrite
+	}
+	current, err := b.client.Lstat(real)
+	if err != nil {
+		return "", err
+	}
+	if !current.Mode().IsRegular() || !force && versionOf(current) != versionOf(info) {
+		return "", errEditConflict
+	}
+	if mode := current.Mode().Perm(); mode != 0 {
+		if err := b.client.Chmod(tmp, mode); err != nil {
+			return "", fmt.Errorf("could not preserve file permissions: %w", err)
+		}
+	}
+	if err := b.replaceUpload(tmp, real); err != nil {
+		return "", err
+	}
+	tmp = ""
 	after, err := b.client.Stat(real)
 	if err != nil {
 		return "", err
 	}
 	return versionOf(after), nil
-}
-
-func (b *SFTPBridge) writeFile(p, content string, mode os.FileMode, create bool) error {
-	flags := os.O_WRONLY | os.O_TRUNC
-	if create {
-		flags |= os.O_CREATE | os.O_EXCL
-	}
-	f, err := b.client.OpenFile(p, flags)
-	if err != nil {
-		return err
-	}
-	if _, err := f.Write([]byte(content)); err != nil {
-		f.Close()
-		return err
-	}
-	if err := f.Close(); err != nil {
-		return err
-	}
-	if create && mode != 0 {
-		_ = b.client.Chmod(p, mode)
-	}
-	return nil
 }
 
 func (m *ConnectionManager) ReadForEdit(id, p string) (EditFile, error) {

@@ -1,9 +1,9 @@
 module terminyxx
 
-go 1.26.0
+go 1.26.11
 
 require (
-	github.com/gorilla/websocket v1.5.3
+	github.com/gorilla/websocket v1.5.4-0.20240701034025-d67f41855da4
 	github.com/kayrus/putty v1.0.5
 	github.com/pkg/sftp v1.13.10
 	github.com/wailsapp/wails/v2 v2.13.0

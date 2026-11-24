@@ -89,3 +89,47 @@ func TestImportResetsRiskyFlagsAndReportsReplaced(t *testing.T) {
 		t.Fatal("agent forwarding imported for a new host")
 	}
 }
+
+func TestRDPImportKeepsRedirectionLocal(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "t.db"), NewMemorySecrets())
+	must(t, err)
+	defer s.Close()
+	local := rdp.RDPProfile{ID: "existing", Host: "work", Port: 3389, Options: rdp.Options{
+		Clipboard: true, Drives: true, DrivePaths: []string{"allowed"}, DrivesReadOnly: true,
+	}}
+	must(t, s.SaveRDPProfile(local))
+	incoming := local
+	incoming.Options = rdp.Options{AllDrives: true, Printers: true, SmartCards: true, Camera: true, Microphone: true}
+	newHost := incoming
+	newHost.ID = "new"
+	res, err := s.ImportBundle(Bundle{Version: BundleVersion, RDP: []rdp.RDPProfile{incoming, newHost}})
+	must(t, err)
+	if res.RDPRedirectionSkipped != 2 {
+		t.Fatalf("redirection changes were not reported: %+v", res)
+	}
+	same, err := s.GetRDPProfile(local.ID)
+	must(t, err)
+	if !same.Options.Clipboard || !same.Options.Drives || !same.Options.DrivesReadOnly || len(same.Options.DrivePaths) != 1 || same.Options.DrivePaths[0] != "allowed" {
+		t.Fatalf("local permissions were lost: %+v", same.Options)
+	}
+	assertNoEscalation := func(p rdp.RDPProfile) {
+		t.Helper()
+		o := p.Options
+		if o.AllDrives || o.Printers || o.SmartCards || o.Camera || o.Microphone {
+			t.Fatalf("import enabled redirection: %+v", o)
+		}
+	}
+	assertNoEscalation(same)
+	added, err := s.GetRDPProfile(newHost.ID)
+	must(t, err)
+	assertNoEscalation(added)
+	incoming.Host = "changed"
+	_, err = s.ImportBundle(Bundle{Version: BundleVersion, RDP: []rdp.RDPProfile{incoming}})
+	must(t, err)
+	changed, err := s.GetRDPProfile(local.ID)
+	must(t, err)
+	assertNoEscalation(changed)
+	if changed.Options.Clipboard || changed.Options.Drives || len(changed.Options.DrivePaths) != 0 {
+		t.Fatalf("local permissions followed a changed destination: %+v", changed.Options)
+	}
+}

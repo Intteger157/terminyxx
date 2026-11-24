@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"terminyxx/internal/testutil"
 )
 
 func TestSafeParts(t *testing.T) {
@@ -49,7 +51,10 @@ func TestCreateWriteCommit(t *testing.T) {
 	if _, err := s.Create(dir, "a.txt"); !errors.Is(err, ErrNotAllowed) {
 		t.Fatalf("Create before Allow: %v", err)
 	}
-	s.Allow(dir)
+	t.Cleanup(s.AbortAll)
+	if err := s.Allow(dir); err != nil {
+		t.Fatal(err)
+	}
 
 	h, err := s.Create(dir, `sub\a.txt`)
 	if err != nil {
@@ -99,7 +104,10 @@ func TestCreateWriteCommit(t *testing.T) {
 func TestEscapesRejected(t *testing.T) {
 	dir := t.TempDir()
 	s := New()
-	s.Allow(dir)
+	t.Cleanup(s.AbortAll)
+	if err := s.Allow(dir); err != nil {
+		t.Fatal(err)
+	}
 	for _, rel := range []string{`..\evil.txt`, "", `x\..\..\evil`} {
 		if _, err := s.Create(dir, rel); err == nil {
 			t.Errorf("Create(%q) accepted", rel)
@@ -107,6 +115,25 @@ func TestEscapesRejected(t *testing.T) {
 	}
 	if err := s.Mkdir(filepath.Join(dir, "other"), "x"); !errors.Is(err, ErrNotAllowed) {
 		t.Errorf("Mkdir outside allowed folder: %v", err)
+	}
+}
+
+func TestFileSinkStaysInsidePickedFolder(t *testing.T) {
+	dir, outside := t.TempDir(), t.TempDir()
+	testutil.DirectoryLink(t, outside, filepath.Join(dir, "sub"))
+	s := New()
+	t.Cleanup(s.AbortAll)
+	if err := s.Allow(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Mkdir(dir, "sub/nested"); err == nil {
+		t.Fatal("created a folder outside the selected root")
+	}
+	if _, err := s.Create(dir, "sub/note.txt"); err == nil {
+		t.Fatal("created a file outside the selected root")
+	}
+	if entries, err := os.ReadDir(outside); err != nil || len(entries) != 0 {
+		t.Fatalf("outside directory is not empty: %v, %v", entries, err)
 	}
 }
 

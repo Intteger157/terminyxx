@@ -12,6 +12,7 @@ func TestSSHDiagnostic(t *testing.T) {
 	m, _, _ := newManager(t)
 	req := passwordReq(s, "diagnose")
 	req.AcceptHostKey = ssh.FingerprintSHA256(s.hostKey.PublicKey())
+	req.AcceptHostKeyAddress = s.addr
 
 	// A probe must not trust a key, even when passed an acceptance token.
 	report := m.TestSSH(req)
@@ -19,7 +20,7 @@ func TestSSHDiagnostic(t *testing.T) {
 	if last.Stage != "Host key" || last.Failure == "" {
 		t.Fatalf("unknown host key: %+v", report)
 	}
-	req.AcceptHostKey = ""
+	req.AcceptHostKey, req.AcceptHostKeyAddress = "", ""
 	connectTrusted(t, m, req)
 	must(t, m.Disconnect(req.ID))
 
@@ -64,4 +65,22 @@ func TestSSHDiagnosticReportsFailedHop(t *testing.T) {
 		failed.Jump || failed.Address != target.addr || failed.Stage != "TCP via jump host" || failed.Failure == "" {
 		t.Fatalf("incorrect failed hop: %+v", report)
 	}
+}
+
+func TestHostKeyConfirmationBelongsToOneAddress(t *testing.T) {
+	jump := newTestServer(t, serverOpts{password: "secret"})
+	target := newTestServer(t, serverOpts{password: "secret", hostKey: jump.hostKey})
+	m, _, _ := newManager(t)
+	req := passwordReq(target, "target")
+	req.Jump = []ConnectRequest{passwordReq(jump, "jump")}
+	var hk *HostKeyError
+	if err := m.Connect(req); !errors.As(err, &hk) || hk.Host != jump.addr {
+		t.Fatalf("expected a prompt for the jump host, got %v", err)
+	}
+	req.AcceptHostKey, req.AcceptHostKeyAddress = hk.Fingerprint, hk.Host
+	if err := m.Connect(req); !errors.As(err, &hk) || hk.Host != target.addr {
+		t.Fatalf("the target needs its own confirmation, got %v", err)
+	}
+	req.AcceptHostKey, req.AcceptHostKeyAddress = hk.Fingerprint, hk.Host
+	must(t, m.Connect(req))
 }

@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+
+	"terminyxx/internal/testutil"
 )
 
 func TestSFTPRoundTrip(t *testing.T) {
@@ -100,6 +102,30 @@ func TestTransferCancel(t *testing.T) {
 	<-done // must return either way (cancelled or already finished)
 }
 
+func TestDownloadStaysInsideSelectedDirectory(t *testing.T) {
+	dest, outside := t.TempDir(), t.TempDir()
+	testutil.DirectoryLink(t, outside, filepath.Join(dest, "sub"))
+	s := newTestServer(t, serverOpts{password: "secret"})
+	m, _, _ := newManager(t)
+	connectTrusted(t, m, passwordReq(s, "root"))
+	b, err := m.sftp("root")
+	must(t, err)
+	must(t, b.Mkdir("/sub"))
+	f, err := b.client.Create("/sub/note.txt")
+	must(t, err)
+	_, err = f.Write([]byte("note"))
+	must(t, err)
+	must(t, f.Close())
+	if err := m.Transfer("root", TransferRequest{JobID: "root", Direction: "download", DestDir: dest, Sources: []string{"/sub"}}); err == nil {
+		t.Fatal("download followed a directory outside the selected root")
+	}
+	entries, err := os.ReadDir(outside)
+	must(t, err)
+	if len(entries) != 0 {
+		t.Fatal("download created a file outside the selected root")
+	}
+}
+
 type transferProgressHook func(TransferProgress)
 
 func (hook transferProgressHook) Emit(_ string, data ...interface{}) {
@@ -155,7 +181,12 @@ func TestTransferReplacementPreservesDestinationUntilComplete(t *testing.T) {
 	down := TransferRequest{JobID: "download", Direction: "download", Sources: []string{remote}, DestDir: destDir}
 	downloadItems, err := bridge.planDownload(down)
 	must(t, err)
-	cancelAfterFirstBytes(bridge.downloadFile, downloadItems[0])
+	root, err := os.OpenRoot(destDir)
+	must(t, err)
+	defer root.Close()
+	cancelAfterFirstBytes(func(ctx context.Context, item transferItem, tracker *progressTracker) error {
+		return bridge.downloadFile(ctx, root, item, tracker)
+	}, downloadItems[0])
 	got, err := os.ReadFile(dest)
 	must(t, err)
 	if !bytes.Equal(got, old) {

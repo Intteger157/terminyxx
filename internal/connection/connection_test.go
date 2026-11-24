@@ -35,7 +35,7 @@ func connectTrusted(t *testing.T, m *ConnectionManager, req ConnectRequest) {
 	if !errors.As(err, &hk) {
 		t.Fatalf("expected host key prompt, got %v", err)
 	}
-	req.AcceptHostKey = hk.Fingerprint
+	req.AcceptHostKey, req.AcceptHostKeyAddress = hk.Fingerprint, hk.Host
 	if err := m.Connect(req); err != nil {
 		t.Fatalf("connect after accepting key: %v", err)
 	}
@@ -62,6 +62,7 @@ func TestHostKeyTrustOnFirstUse(t *testing.T) {
 
 	// A wrong fingerprint must not be accepted.
 	req := passwordReq(s, "a")
+	req.AcceptHostKeyAddress = hk.Host
 	req.AcceptHostKey = "SHA256:wrong"
 	if err := m.Connect(req); !errors.As(err, &hk) {
 		t.Fatalf("wrong fingerprint should still prompt, got %v", err)
@@ -95,7 +96,7 @@ func TestHostKeyMismatch(t *testing.T) {
 	}
 	// Accepting the fingerprint must not override a mismatch.
 	req := passwordReq(s, "a")
-	req.AcceptHostKey = hkErr.Fingerprint
+	req.AcceptHostKey, req.AcceptHostKeyAddress = hkErr.Fingerprint, hkErr.Host
 	if err := m.Connect(req); !errors.As(err, &hkErr) || !hkErr.Mismatch {
 		t.Fatalf("mismatch must stay an error, got %v", err)
 	}
@@ -109,7 +110,7 @@ func TestWrongPassword(t *testing.T) {
 	err := m.Connect(req)
 	var hk *HostKeyError
 	if errors.As(err, &hk) {
-		req.AcceptHostKey = hk.Fingerprint
+		req.AcceptHostKey, req.AcceptHostKeyAddress = hk.Fingerprint, hk.Host
 		err = m.Connect(req)
 	}
 	if err == nil || !strings.Contains(err.Error(), "unable to authenticate") {

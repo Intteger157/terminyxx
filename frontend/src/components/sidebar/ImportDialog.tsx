@@ -64,6 +64,7 @@ export function ImportDialog({ existingSSH, existingRDP, onClose, onImport }: Im
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [allowedCommands, setAllowedCommands] = useState<Set<ImportItem>>(new Set());
   const [root, setRoot] = useState('');
   const [keepFolders, setKeepFolders] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -82,6 +83,7 @@ export function ImportDialog({ existingSSH, existingRDP, onClose, onImport }: Im
     async (id: string, paths: string[]) => {
       setLoading(true);
       setError(null);
+      setAllowedCommands(new Set());
       try {
         const res = await ReadImport(id, paths);
         const items: ImportItem[] = (res.hosts ?? []).map((h, i) => ({ ...h, key: `${i}:${h.name}`, index: i, jump: h.jump ?? [], folder: h.folder ?? [], kind: h.kind === 'rdp' ? 'rdp' : 'ssh' }));
@@ -111,6 +113,7 @@ export function ImportDialog({ existingSSH, existingRDP, onClose, onImport }: Im
     setRoot(s.name.replace(/\s*\(.*\)$/, ''));
     setLoaded(null);
     setSelected(new Set());
+    setAllowedCommands(new Set());
     setError(null);
     if (s.detected) load(s.id, []);
   };
@@ -140,7 +143,11 @@ export function ImportDialog({ existingSSH, existingRDP, onClose, onImport }: Im
   const submit = async () => {
     setBusy(true);
     try {
-      await onImport(items.filter((it) => selected.has(it.key)), root.trim(), keepFolders && hasFolders);
+      const chosen = items.filter((it) => selected.has(it.key)).map((it) => ({
+        ...it,
+        proxyCommand: allowedCommands.has(it) ? it.proxyCommand : undefined,
+      }));
+      await onImport(chosen, root.trim(), keepFolders && hasFolders);
     } finally {
       setBusy(false);
     }
@@ -243,39 +250,63 @@ export function ImportDialog({ existingSSH, existingRDP, onClose, onImport }: Im
               </div>
               <div className="flex-1 min-h-0 max-h-[38vh] overflow-y-auto rounded-xl border border-white/[0.06] divide-y divide-white/[0.04]">
                 {items.map((it) => (
-                  <label key={it.key} className="flex items-center gap-3 px-3 py-2 hover:bg-white/[0.03] cursor-pointer">
-                    <input type="checkbox" className="accent-[rgb(var(--accent))]" checked={selected.has(it.key)} onChange={() => toggle(it.key)} />
-                    <span className="min-w-0 flex-1">
-                      <span className="flex items-center gap-2 min-w-0">
-                        {it.kind === 'rdp' && <Monitor size={12} className="text-gray-500 flex-shrink-0" />}
-                        <span className="font-medium text-gray-200 truncate">{it.name}</span>
-                        {it.folder.length > 0 && (
-                          <span className="text-2xs px-1.5 rounded bg-white/[0.05] text-gray-500 truncate max-w-[40%]">{it.folder.join(' / ')}</span>
-                        )}
-                        {isDuplicate(it) && <span className="text-2xs px-1.5 rounded bg-white/[0.06] text-gray-400 flex-shrink-0">already saved</span>}
-                        {it.jump.length > 0 && (
-                          <span
-                            className="flex items-center gap-1 text-2xs px-1.5 rounded bg-white/[0.06] text-gray-400 flex-shrink-0 max-w-[40%] truncate"
-                            title={`Connects through ${hopNames(it, items)}. Jump hosts that aren’t saved or imported yet are added as hosts.`}
-                          >
-                            <Route size={10} className="flex-shrink-0" /> via {hopNames(it, items)}
-                          </span>
-                        )}
-                        {it.warning && (
-                          <span className="flex items-center gap-1 text-2xs px-1.5 rounded bg-amber-400/10 text-amber-300 flex-shrink-0" title={it.warning}>
-                            <AlertTriangle size={10} /> {it.warning}
-                          </span>
-                        )}
+                  <div key={it.key} className="px-3 py-2 hover:bg-white/[0.03]">
+                    <label className="flex items-center gap-3 cursor-pointer">
+                      <input type="checkbox" className="accent-[rgb(var(--accent))]" checked={selected.has(it.key)} onChange={() => toggle(it.key)} />
+                      <span className="min-w-0 flex-1">
+                        <span className="flex items-center gap-2 min-w-0">
+                          {it.kind === 'rdp' && <Monitor size={12} className="text-gray-500 flex-shrink-0" />}
+                          <span className="font-medium text-gray-200 truncate">{it.name}</span>
+                          {it.folder.length > 0 && (
+                            <span className="text-2xs px-1.5 rounded bg-white/[0.05] text-gray-500 truncate max-w-[40%]">{it.folder.join(' / ')}</span>
+                          )}
+                          {isDuplicate(it) && <span className="text-2xs px-1.5 rounded bg-white/[0.06] text-gray-400 flex-shrink-0">already saved</span>}
+                          {it.jump.length > 0 && (
+                            <span
+                              className="flex items-center gap-1 text-2xs px-1.5 rounded bg-white/[0.06] text-gray-400 flex-shrink-0 max-w-[40%] truncate"
+                              title={`Connects through ${hopNames(it, items)}. Jump hosts that aren’t saved or imported yet are added as hosts.`}
+                            >
+                              <Route size={10} className="flex-shrink-0" /> via {hopNames(it, items)}
+                            </span>
+                          )}
+                          {it.warning && (
+                            <span className="flex items-center gap-1 text-2xs px-1.5 rounded bg-amber-400/10 text-amber-300 flex-shrink-0" title={it.warning}>
+                              <AlertTriangle size={10} /> {it.warning}
+                            </span>
+                          )}
+                        </span>
+                        <span className="block text-2xs text-gray-500 font-mono truncate">
+                          {it.domain ? `${it.domain}\\` : ''}
+                          {it.user ? `${it.user}@` : ''}
+                          {it.host}
+                          {it.port !== (it.kind === 'rdp' ? 3389 : 22) && `:${it.port}`}
+                          {it.keyFile && ` · ${it.keyFile.split(/[\\/]/).pop()}`}
+                        </span>
                       </span>
-                      <span className="block text-2xs text-gray-500 font-mono truncate">
-                        {it.domain ? `${it.domain}\\` : ''}
-                        {it.user ? `${it.user}@` : ''}
-                        {it.host}
-                        {it.port !== (it.kind === 'rdp' ? 3389 : 22) && `:${it.port}`}
-                        {it.keyFile && ` · ${it.keyFile.split(/[\\/]/).pop()}`}
-                      </span>
-                    </span>
-                  </label>
+                    </label>
+                    {it.proxyCommand && (
+                      <div className="ml-7 mt-2 space-y-1 text-2xs">
+                        <code className="block whitespace-pre-wrap break-all text-gray-400">{it.proxyCommand}</code>
+                        <label className="flex items-center gap-2 text-amber-300">
+                          <input
+                            type="checkbox"
+                            checked={allowedCommands.has(it)}
+                            disabled={!selected.has(it.key) || busy}
+                            onChange={(e) => {
+                              const checked = e.target.checked;
+                              setAllowedCommands((prev) => {
+                                const next = new Set(prev);
+                                if (checked) next.add(it);
+                                else next.delete(it);
+                                return next;
+                              });
+                            }}
+                          />
+                          Allow this ProxyCommand to run on this computer
+                        </label>
+                      </div>
+                    )}
+                  </div>
                 ))}
               </div>
               {(skipped.length > 0 || loaded!.notes.length > 0) && (

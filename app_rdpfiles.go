@@ -48,7 +48,9 @@ func (a *App) RDPPickSaveFolder() (string, error) {
 	if err != nil || dir == "" {
 		return "", err
 	}
-	a.files.Allow(dir)
+	if err := a.files.Allow(dir); err != nil {
+		return "", err
+	}
 	return dir, nil
 }
 

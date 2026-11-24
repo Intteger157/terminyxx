@@ -446,6 +446,7 @@ func (s *Store) SecretKeys() ([]string, error) {
 		{`SELECT id FROM rdp_profiles`, "rdp:"},
 		{`SELECT id FROM identities`, "ident:"},
 		{`SELECT id FROM ssh_profiles WHERE proxy != ''`, "proxy:"},
+		{`SELECT id FROM inventories`, "inv:"},
 	} {
 		rows, err := s.db.Query(q.sql)
 		if err != nil {
@@ -458,6 +459,9 @@ func (s *Store) SecretKeys() ([]string, error) {
 			}
 		}
 		rows.Close()
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
 	}
 	return keys, nil
 }

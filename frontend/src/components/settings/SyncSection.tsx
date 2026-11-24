@@ -44,7 +44,10 @@ export function SyncSection() {
         dialogs.toast(`Updated the address of existing hosts: ${r.replaced.join(', ')}. Check them before connecting.`, 'error');
       }
       if (r.flagsReset > 0) {
-        dialogs.toast(`Agent forwarding, tunnel auto-start and commands run after login from the file were turned off on ${r.flagsReset} hosts. Turn them on again in the host settings if you trust them.`);
+        dialogs.toast(`Restricted SSH settings were skipped on ${r.flagsReset} hosts. Review the host settings to enable them on this computer.`);
+      }
+      if (r.rdpRedirectionSkipped > 0) {
+        dialogs.toast(`RDP redirection settings from the file were skipped on ${r.rdpRedirectionSkipped} hosts. Review sharing permissions in the host settings.`);
       }
     } catch (e) {
       dialogs.toast(String(e).replace(/^Error: /, ''), 'error');

@@ -26,11 +26,12 @@ const sealedPrefix = "enc1:"
 type Vault struct {
 	inner Secrets
 
-	mu      sync.RWMutex
-	ready   bool // SetEnabled has been called
-	enabled bool
-	dek     []byte
-	keys    func() ([]string, error)
+	mu       sync.RWMutex
+	ready    bool // SetEnabled has been called
+	enabled  bool
+	migrated bool
+	dek      []byte
+	keys     func() ([]string, error)
 }
 
 func NewVault(inner Secrets) *Vault { return &Vault{inner: inner} }
@@ -93,10 +94,25 @@ func (v *Vault) Enable(dek []byte) error {
 	v.wipe()
 	v.dek = append([]byte(nil), dek...)
 	if err := v.rewrite(true); err != nil {
-		v.dek = nil
+		v.wipe()
 		return err
 	}
 	v.enabled = true
+	v.migrated = true
+	return nil
+}
+
+// Migrate seals entries left in plaintext by earlier versions with a vault.
+func (v *Vault) Migrate() error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if v.migrated {
+		return nil
+	}
+	if err := v.rewrite(true); err != nil {
+		return err
+	}
+	v.migrated = true
 	return nil
 }
 
@@ -112,6 +128,7 @@ func (v *Vault) Disable() error {
 		return err
 	}
 	v.enabled = false
+	v.migrated = false
 	return nil
 }
 
@@ -131,6 +148,9 @@ func (v *Vault) rewrite(seal bool) error {
 		}
 		if err != nil {
 			return err
+		}
+		if seal && strings.HasPrefix(raw, sealedPrefix) {
+			continue
 		}
 		plain, err := v.open(k, raw)
 		if err != nil {
@@ -198,12 +218,15 @@ func (v *Vault) open(key, raw string) (string, error) {
 }
 
 func (v *Vault) Get(key string) (string, error) {
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+	if v.enabled && v.dek == nil {
+		return "", ErrSecretLocked
+	}
 	raw, err := v.inner.Get(key)
 	if err != nil {
 		return "", err
 	}
-	v.mu.RLock()
-	defer v.mu.RUnlock()
 	return v.open(key, raw)
 }
 

@@ -28,8 +28,8 @@ type Config struct {
 	// Proxmox: base URL (https://pve:8006) and API token ID (user@realm!name).
 	URL     string `json:"url"`
 	TokenID string `json:"tokenId"`
-	// Fingerprint pins the server's certificate (SHA-256, hex) when it does
-	// not verify against the system roots (Proxmox is self-signed by default).
+	// Fingerprint pins the server's certificate (SHA-256, hex) once the user
+	// accepts it. It must match on subsequent connections.
 	Fingerprint string `json:"fingerprint"`
 
 	// AWS: access key ID and the regions to read.
@@ -91,36 +91,20 @@ func Fetch(ctx context.Context, kind string, cfg Config, secret string) ([]Insta
 	return list, nil
 }
 
-// pinnedClient verifies the server against the system roots, or else
-// against the pinned fingerprint. An unknown certificate fails with
+// pinnedClient verifies the server against its pinned fingerprint or, when
+// no pin is configured, against the system roots. An unknown certificate fails with
 // CertPrefix and its fingerprint.
-func pinnedClient(fingerprint string) *http.Client {
-	fingerprint = strings.ToLower(strings.ReplaceAll(fingerprint, ":", ""))
+func pinnedClient(host, fingerprint string) *http.Client {
 	tlsCfg := &tls.Config{
 		MinVersion:         tls.VersionTLS12,
 		InsecureSkipVerify: true, // verified below
 		VerifyConnection: func(cs tls.ConnectionState) error {
-			if len(cs.PeerCertificates) == 0 {
-				return errors.New("server sent no certificate")
-			}
-			leaf := cs.PeerCertificates[0]
-			sum := sha256.Sum256(leaf.Raw)
-			fp := hex.EncodeToString(sum[:])
-			if fingerprint != "" && fp == fingerprint {
-				return nil
-			}
-			inter := x509.NewCertPool()
-			for _, c := range cs.PeerCertificates[1:] {
-				inter.AddCert(c)
-			}
-			if _, err := leaf.Verify(x509.VerifyOptions{DNSName: cs.ServerName, Intermediates: inter}); err == nil {
-				return nil
-			}
-			return &CertError{Fingerprint: fp, Subject: leaf.Subject.String()}
+			return verifyProxmoxCertificate(host, fingerprint, cs.PeerCertificates, nil)
 		},
 	}
 	return &http.Client{
-		Timeout: requestTimeout,
+		Timeout:       requestTimeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 		Transport: &http.Transport{
 			Proxy:               http.ProxyFromEnvironment,
 			DialContext:         (&net.Dialer{Timeout: 10 * time.Second}).DialContext,
@@ -128,6 +112,29 @@ func pinnedClient(fingerprint string) *http.Client {
 			TLSHandshakeTimeout: 10 * time.Second,
 		},
 	}
+}
+
+func verifyProxmoxCertificate(host, fingerprint string, chain []*x509.Certificate, roots *x509.CertPool) error {
+	if len(chain) == 0 {
+		return errors.New("server sent no certificate")
+	}
+	leaf := chain[0]
+	sum := sha256.Sum256(leaf.Raw)
+	fp := hex.EncodeToString(sum[:])
+	if fingerprint != "" {
+		if strings.EqualFold(strings.ReplaceAll(fingerprint, ":", ""), fp) {
+			return nil
+		}
+	} else if host != "" {
+		inter := x509.NewCertPool()
+		for _, c := range chain[1:] {
+			inter.AddCert(c)
+		}
+		if _, err := leaf.Verify(x509.VerifyOptions{DNSName: host, Roots: roots, Intermediates: inter}); err == nil {
+			return nil
+		}
+	}
+	return &CertError{Fingerprint: fp, Subject: leaf.Subject.String()}
 }
 
 // CertError is a server certificate that is neither publicly trusted nor

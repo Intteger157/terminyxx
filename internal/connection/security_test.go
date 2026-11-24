@@ -93,7 +93,7 @@ func TestHostKeyReplaceAndRevoke(t *testing.T) {
 	}
 
 	req := passwordReq(s, "a")
-	req.AcceptHostKey = hkErr.Fingerprint
+	req.AcceptHostKey, req.AcceptHostKeyAddress = hkErr.Fingerprint, hkErr.Host
 	req.ReplaceHostKey = true
 	must(t, m.Connect(req))
 	// The new key is now the trusted one.

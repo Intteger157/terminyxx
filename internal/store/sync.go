@@ -2,6 +2,7 @@ package store
 
 import (
 	"fmt"
+	"slices"
 
 	"terminyxx/internal/rdp"
 )
@@ -28,16 +29,18 @@ type Bundle struct {
 
 // ImportResult counts what an import added or replaced.
 type ImportResult struct {
-	Folders  int `json:"folders"`
-	Hosts    int `json:"hosts"`
+	Folders    int `json:"folders"`
+	Hosts      int `json:"hosts"`
 	Snippets   int `json:"snippets"`
 	Identities int `json:"identities"`
 	// Replaced lists existing hosts whose address, user or jump host the
 	// import changed, so the UI can tell the user.
 	Replaced []string `json:"replaced"`
-	// FlagsReset counts hosts on which agent forwarding or tunnel auto-start
-	// from the file was turned off; the user has to turn them on again here.
+	// FlagsReset counts SSH hosts with restricted behaviors from the file.
 	FlagsReset int `json:"flagsReset"`
+	// RDPRedirectionSkipped counts profiles whose local permissions were kept
+	// or reset instead of taking permissions from the file.
+	RDPRedirectionSkipped int `json:"rdpRedirectionSkipped"`
 }
 
 // ExportBundle collects the data to sync. Saved passwords are included only
@@ -174,8 +177,16 @@ func (s *Store) ImportBundle(b Bundle) (ImportResult, error) {
 		if p.FolderID != "" && !s.folderExists(p.FolderID) {
 			p.FolderID = ""
 		}
-		if cur, err := s.GetRDPProfile(p.ID); err == nil && (cur.Host != p.Host || cur.Port != p.Port || cur.Username != p.Username) {
-			res.Replaced = append(res.Replaced, cur.Name)
+		var local rdp.Options
+		if cur, err := s.GetRDPProfile(p.ID); err == nil {
+			if cur.Host != p.Host || cur.Port != p.Port || cur.Username != p.Username || cur.Domain != p.Domain || cur.Options.Gateway != p.Options.Gateway {
+				res.Replaced = append(res.Replaced, cur.Name)
+			} else {
+				local = cur.Options
+			}
+		}
+		if keepLocalRedirection(&p.Options, local) {
+			res.RDPRedirectionSkipped++
 		}
 		if err := s.SaveRDPProfile(p); err != nil {
 			return res, err
@@ -203,6 +214,22 @@ func (s *Store) ImportBundle(b Bundle) (ImportResult, error) {
 		res.Snippets++
 	}
 	return res, nil
+}
+
+// Redirection permissions belong to this device and the reviewed destination.
+func keepLocalRedirection(opts *rdp.Options, local rdp.Options) bool {
+	changed := opts.Clipboard != local.Clipboard || opts.Printers != local.Printers ||
+		opts.PrinterDrivers != local.PrinterDrivers && opts.Printers ||
+		opts.Drives != local.Drives || opts.AllDrives != local.AllDrives ||
+		opts.DrivesReadOnly != local.DrivesReadOnly || !slices.Equal(opts.DrivePaths, local.DrivePaths) ||
+		opts.SmartCards != local.SmartCards || opts.ComPorts != local.ComPorts || opts.Usb != local.Usb ||
+		opts.Microphone != local.Microphone || opts.Camera != local.Camera
+	opts.Clipboard, opts.Printers, opts.PrinterDrivers = local.Clipboard, local.Printers, local.PrinterDrivers
+	opts.Drives, opts.AllDrives, opts.DrivesReadOnly = local.Drives, local.AllDrives, local.DrivesReadOnly
+	opts.DrivePaths = local.DrivePaths
+	opts.SmartCards, opts.ComPorts, opts.Usb = local.SmartCards, local.ComPorts, local.Usb
+	opts.Microphone, opts.Camera = local.Microphone, local.Camera
+	return changed
 }
 
 // resetRiskyFlags turns off settings from a sync file that act on their own

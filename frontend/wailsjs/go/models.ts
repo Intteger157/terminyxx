@@ -87,6 +87,7 @@ export namespace connection {
 	    keyPath: string;
 	    passphrase: string;
 	    acceptHostKey: string;
+	    acceptHostKeyAddress: string;
 	    replaceHostKey: boolean;
 	    profileId: string;
 	    allowLegacyAlgorithms: boolean;
@@ -113,6 +114,7 @@ export namespace connection {
 	        this.keyPath = source["keyPath"];
 	        this.passphrase = source["passphrase"];
 	        this.acceptHostKey = source["acceptHostKey"];
+	        this.acceptHostKeyAddress = source["acceptHostKeyAddress"];
 	        this.replaceHostKey = source["replaceHostKey"];
 	        this.profileId = source["profileId"];
 	        this.allowLegacyAlgorithms = source["allowLegacyAlgorithms"];
@@ -1171,6 +1173,7 @@ export namespace store {
 	    identities: number;
 	    replaced: string[];
 	    flagsReset: number;
+	    rdpRedirectionSkipped: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new ImportResult(source);
@@ -1184,6 +1187,7 @@ export namespace store {
 	        this.identities = source["identities"];
 	        this.replaced = source["replaced"];
 	        this.flagsReset = source["flagsReset"];
+	        this.rdpRedirectionSkipped = source["rdpRedirectionSkipped"];
 	    }
 	}
 	export class Inventory {

@@ -225,7 +225,7 @@ func TestProxyJump(t *testing.T) {
 		if !ok {
 			t.Fatalf("connect: %v", err)
 		}
-		req.AcceptHostKey = hk.Fingerprint
+		req.AcceptHostKey, req.AcceptHostKeyAddress = hk.Fingerprint, hk.Host
 	}
 	if _, err := m.get("viajump"); err != nil {
 		t.Fatal("not connected via jump host")

@@ -3,6 +3,7 @@ package inventory
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/hex"
 	"errors"
 	"net/http"
@@ -137,5 +138,25 @@ func TestFetchProxmox(t *testing.T) {
 	}
 	if _, err := Fetch(context.Background(), KindProxmox, cfg, "wrong"); err == nil || !strings.Contains(err.Error(), "token") {
 		t.Errorf("wrong secret: %v", err)
+	}
+}
+
+func TestProxmoxCertificateNeedsMatchingIPOrFingerprint(t *testing.T) {
+	srv := httptest.NewTLSServer(http.NotFoundHandler())
+	defer srv.Close()
+	leaf := srv.Certificate()
+	chain := []*x509.Certificate{leaf}
+	roots := x509.NewCertPool()
+	roots.AddCert(leaf)
+	if err := verifyProxmoxCertificate("127.0.0.1", "", chain, roots); err != nil {
+		t.Fatalf("trusted certificate for the destination IP was refused: %v", err)
+	}
+	for _, host := range []string{"192.0.2.1", ""} {
+		if err := verifyProxmoxCertificate(host, "", chain, roots); err == nil {
+			t.Fatalf("trusted certificate for a different destination accepted for %q", host)
+		}
+	}
+	if err := verifyProxmoxCertificate("127.0.0.1", strings.Repeat("00", 32), chain, roots); err == nil {
+		t.Fatal("a different certificate was accepted despite an existing fingerprint")
 	}
 }

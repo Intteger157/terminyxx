@@ -2,9 +2,38 @@ package store
 
 import (
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestVaultMigratesExistingInventorySecrets(t *testing.T) {
+	inner := NewMemorySecrets()
+	v := NewVault(inner)
+	s, err := Open(filepath.Join(t.TempDir(), "test.db"), v)
+	must(t, err)
+	defer s.Close()
+	v.SetKeyLister(s.SecretKeys)
+	v.SetEnabled(false)
+	inv := Inventory{ID: "account", Name: "Account", Kind: "proxmox", Secret: "local-test-secret"}
+	must(t, s.SaveInventory(inv))
+	v.SetEnabled(true) // The previous app had a vault but omitted inventory entries.
+	if _, err := s.InventorySecret(inv.ID); !errors.Is(err, ErrSecretLocked) {
+		t.Fatalf("legacy token available while sealed: %v", err)
+	}
+	v.Unseal(make([]byte, 32))
+	must(t, v.Migrate())
+	if raw, err := inner.Get(invSecretKey(inv.ID)); err != nil || !strings.HasPrefix(raw, sealedPrefix) {
+		t.Fatalf("existing token was not sealed: %v", err)
+	}
+	v.Seal()
+	v.Unseal(make([]byte, 32))
+	must(t, v.Disable())
+	v.Seal()
+	if got, err := s.InventorySecret(inv.ID); got != inv.Secret || err != nil {
+		t.Fatalf("token unavailable after removing the master password: %v", err)
+	}
+}
 
 func TestVaultSealsAndOpens(t *testing.T) {
 	inner := NewMemorySecrets()

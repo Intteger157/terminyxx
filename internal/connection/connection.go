@@ -83,8 +83,9 @@ func dialSSH(req ConnectRequest, hostKeys *HostKeyStore, policy Policy, report *
 	var via *ssh.Client
 	for _, hop := range req.Jump {
 		hop.Jump = nil
-		// A host key the user confirmed applies to whichever hop presents it.
+		// The callback only uses the confirmation at its exact address.
 		hop.AcceptHostKey, hop.ReplaceHostKey = req.AcceptHostKey, req.ReplaceHostKey
+		hop.AcceptHostKeyAddress = req.AcceptHostKeyAddress
 		c, err := dialHop(hop, via, hostKeys, policy, report, true)
 		if err != nil {
 			closeJumpClients(jumps)
@@ -135,6 +136,9 @@ func dialHop(req ConnectRequest, via *ssh.Client, hostKeys *HostKeyStore, policy
 		Timeout: dialTimeout,
 	}
 	if hostKeys != nil {
+		if req.AcceptHostKeyAddress != addr {
+			req.AcceptHostKey, req.ReplaceHostKey = "", false
+		}
 		cb, algos, err := hostKeys.Callback(addr, req.AcceptHostKey, req.ReplaceHostKey)
 		if err != nil {
 			check("Host key", "Could not read trusted host keys")

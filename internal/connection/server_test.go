@@ -30,17 +30,18 @@ type serverOpts struct {
 	password      string
 	keyboardOnly  bool
 	authorizedKey ssh.PublicKey
+	hostKey       ssh.Signer
+	wrapWriter    func(sftp.FileWriter) sftp.FileWriter
 }
 
 func newTestServer(t *testing.T, opts serverOpts) *testServer {
 	t.Helper()
-	_, priv, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	signer, err := ssh.NewSignerFromKey(priv)
-	if err != nil {
-		t.Fatal(err)
+	signer := opts.hostKey
+	if signer == nil {
+		_, priv, err := ed25519.GenerateKey(rand.Reader)
+		must(t, err)
+		signer, err = ssh.NewSignerFromKey(priv)
+		must(t, err)
 	}
 
 	cfg := &ssh.ServerConfig{}
@@ -81,6 +82,9 @@ func newTestServer(t *testing.T, opts serverOpts) *testServer {
 	t.Cleanup(func() { ln.Close() })
 
 	fs := sftp.InMemHandler()
+	if opts.wrapWriter != nil {
+		fs.FilePut = opts.wrapWriter(fs.FilePut)
+	}
 	go func() {
 		for {
 			nc, err := ln.Accept()

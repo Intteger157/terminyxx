@@ -61,13 +61,14 @@ func (c *pveClient) get(ctx context.Context, path string, out any) error {
 func fetchProxmox(ctx context.Context, cfg Config, secret string) ([]Instance, error) {
 	base := strings.TrimRight(strings.TrimSpace(cfg.URL), "/")
 	u, err := url.Parse(base)
-	if err != nil || u.Scheme != "https" || u.Host == "" {
+	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
 		return nil, errors.New("the Proxmox URL must look like https://host:8006")
 	}
 	if cfg.TokenID == "" || secret == "" || !strings.Contains(cfg.TokenID, "!") {
 		return nil, errors.New("an API token ID (user@realm!name) and its secret are required")
 	}
-	c := &pveClient{base: base, auth: "PVEAPIToken=" + strings.TrimSpace(cfg.TokenID) + "=" + strings.TrimSpace(secret), client: pinnedClient(cfg.Fingerprint)}
+	c := &pveClient{base: base, auth: "PVEAPIToken=" + strings.TrimSpace(cfg.TokenID) + "=" + strings.TrimSpace(secret), client: pinnedClient(u.Hostname(), cfg.Fingerprint)}
+	defer c.client.CloseIdleConnections()
 
 	var res []pveResource
 	if err := c.get(ctx, "/cluster/resources?type=vm", &res); err != nil {

@@ -45,6 +45,7 @@ type WrapStore interface {
 type SecretVault interface {
 	Unseal(dek []byte)
 	Seal()
+	Migrate() error
 	Enable(dek []byte) error
 	Disable() error
 	SetEnabled(on bool)
@@ -150,6 +151,10 @@ func (l *Lock) openVault(password string) error {
 			return err
 		}
 		l.vault.Unseal(dek)
+		if err := l.vault.Migrate(); err != nil {
+			l.vault.Seal()
+			return err
+		}
 		return nil
 	}
 	return l.enableVault(password)

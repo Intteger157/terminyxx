@@ -10,6 +10,7 @@
 package filesink
 
 import (
+	"crypto/rand"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -26,42 +27,57 @@ var ErrNotAllowed = errors.New("this folder was not chosen for saving files")
 
 type file struct {
 	f     *os.File
+	root  *os.Root
 	tmp   string
 	final string
+	perm  os.FileMode
 }
 
 // Sink keeps the files being written and the folders the user allowed.
 type Sink struct {
 	mu      sync.Mutex
 	files   map[string]*file
-	allowed map[string]bool
+	allowed map[string]*os.Root
 	next    int
 }
 
 func New() *Sink {
-	return &Sink{files: map[string]*file{}, allowed: map[string]bool{}}
+	return &Sink{files: map[string]*file{}, allowed: map[string]*os.Root{}}
 }
 
 func key(dir string) string {
 	k := filepath.Clean(dir)
-	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+	if runtime.GOOS == "windows" {
 		k = strings.ToLower(k)
 	}
 	return k
 }
 
 // Allow lets files be saved into dir (a folder the user just picked).
-func (s *Sink) Allow(dir string) {
+func (s *Sink) Allow(dir string) error {
+	if !filepath.IsAbs(dir) {
+		return ErrNotAllowed
+	}
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return err
+	}
 	s.mu.Lock()
-	s.allowed[key(dir)] = true
+	k := key(dir)
+	previous := s.allowed[k]
+	s.allowed[k] = root
 	s.mu.Unlock()
+	if previous != nil {
+		_ = previous.Close()
+	}
+	return nil
 }
 
 // Allowed reports whether dir was allowed with Allow.
 func (s *Sink) Allowed(dir string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.allowed[key(dir)]
+	return s.allowed[key(dir)] != nil
 }
 
 var reserved = map[string]bool{"CON": true, "PRN": true, "AUX": true, "NUL": true, "CONIN$": true, "CONOUT$": true}
@@ -70,6 +86,9 @@ func init() {
 	for i := 1; i <= 9; i++ {
 		reserved["COM"+strconv.Itoa(i)] = true
 		reserved["LPT"+strconv.Itoa(i)] = true
+	}
+	for _, digit := range []string{"¹", "²", "³"} {
+		reserved["COM"+digit], reserved["LPT"+digit] = true, true
 	}
 }
 
@@ -120,54 +139,81 @@ func checkName(p string) error {
 	return nil
 }
 
-func (s *Sink) resolve(dir, rel string) (string, error) {
-	if !filepath.IsAbs(dir) || !s.Allowed(dir) {
-		return "", ErrNotAllowed
+func (s *Sink) openAllowedRoot(dir string) (*os.Root, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	root := s.allowed[key(dir)]
+	if root == nil {
+		return nil, ErrNotAllowed
 	}
-	parts, err := SafeParts(rel)
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(append([]string{filepath.Clean(dir)}, parts...)...), nil
+	return root.OpenRoot(".")
 }
 
 // Mkdir creates the folder rel (and its parents) inside an allowed dir.
 func (s *Sink) Mkdir(dir, rel string) error {
-	p, err := s.resolve(dir, rel)
+	parts, err := SafeParts(rel)
 	if err != nil {
 		return err
 	}
-	return os.MkdirAll(p, 0o755)
+	root, err := s.openAllowedRoot(dir)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	if len(parts) == 0 {
+		return nil
+	}
+	return root.MkdirAll(filepath.Join(parts...), 0o755)
 }
 
 // Create starts a file at rel inside an allowed dir and returns its handle.
 func (s *Sink) Create(dir, rel string) (string, error) {
-	p, err := s.resolve(dir, rel)
+	parts, err := SafeParts(rel)
 	if err != nil {
 		return "", err
 	}
-	if filepath.Clean(p) == filepath.Clean(dir) {
+	if len(parts) == 0 {
 		return "", errors.New("empty file name")
 	}
-	return s.CreateAt(p, 0o644)
+	root, err := s.openAllowedRoot(dir)
+	if err != nil {
+		return "", err
+	}
+	return s.create(root, filepath.Join(parts...), 0o644)
 }
 
 // CreateAt starts a file at an exact path chosen by the app itself (not the
 // webview), such as a printed document in the app's own folder.
 func (s *Sink) CreateAt(path string, perm os.FileMode) (string, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	parent := filepath.Dir(path)
+	if err := os.MkdirAll(parent, 0o755); err != nil {
 		return "", err
 	}
-	f, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*.part")
+	root, err := os.OpenRoot(parent)
 	if err != nil {
 		return "", err
 	}
-	_ = f.Chmod(perm)
+	return s.create(root, filepath.Base(path), perm)
+}
+
+// create owns root until the file is committed or discarded.
+func (s *Sink) create(root *os.Root, name string, perm os.FileMode) (string, error) {
+	parent := filepath.Dir(name)
+	if err := root.MkdirAll(parent, 0o755); err != nil {
+		_ = root.Close()
+		return "", err
+	}
+	tmp := filepath.Join(parent, ".terminyxx-"+rand.Text()+".part")
+	f, err := root.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		_ = root.Close()
+		return "", err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.next++
 	h := strconv.Itoa(s.next)
-	s.files[h] = &file{f: f, tmp: f.Name(), final: path}
+	s.files[h] = &file{f: f, root: root, tmp: tmp, final: name, perm: perm}
 	return h, nil
 }
 
@@ -198,29 +244,35 @@ func (s *Sink) Close(handle string, commit bool) (string, error) {
 	if f == nil {
 		return "", errors.New("unknown file handle")
 	}
-	err := f.f.Close()
+	defer f.root.Close()
+	defer f.root.Remove(f.tmp)
+	var err error
+	if commit {
+		err = f.f.Chmod(f.perm)
+	}
+	if closeErr := f.f.Close(); err == nil {
+		err = closeErr
+	}
 	if !commit || err != nil {
-		_ = os.Remove(f.tmp)
 		return "", err
 	}
 	for i := 1; i < 1000; i++ {
 		target := numbered(f.final, i)
 		// Link fails if target exists, so a file that appeared meanwhile is kept.
-		if err := os.Link(f.tmp, target); err == nil {
-			_ = os.Remove(f.tmp)
-			return target, nil
+		if err := f.root.Link(f.tmp, target); err == nil {
+			return filepath.Join(f.root.Name(), target), nil
 		} else if !errors.Is(err, os.ErrExist) {
 			// No hard links on this file system: check, then rename.
-			if _, statErr := os.Lstat(target); errors.Is(statErr, os.ErrNotExist) {
-				if err := os.Rename(f.tmp, target); err != nil {
-					_ = os.Remove(f.tmp)
+			if _, statErr := f.root.Lstat(target); errors.Is(statErr, os.ErrNotExist) {
+				if err := f.root.Rename(f.tmp, target); err != nil {
 					return "", err
 				}
-				return target, nil
+				return filepath.Join(f.root.Name(), target), nil
+			} else if statErr != nil {
+				return "", statErr
 			}
 		}
 	}
-	_ = os.Remove(f.tmp)
 	return "", errors.New("too many files with the same name")
 }
 
@@ -241,10 +293,16 @@ func numbered(path string, i int) string {
 func (s *Sink) AbortAll() {
 	s.mu.Lock()
 	files := s.files
+	allowed := s.allowed
 	s.files = map[string]*file{}
+	s.allowed = map[string]*os.Root{}
 	s.mu.Unlock()
 	for _, f := range files {
 		_ = f.f.Close()
-		_ = os.Remove(f.tmp)
+		_ = f.root.Remove(f.tmp)
+		_ = f.root.Close()
+	}
+	for _, root := range allowed {
+		_ = root.Close()
 	}
 }
