@@ -2,6 +2,7 @@ package connection
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"io"
@@ -13,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/pkg/sftp"
 )
 
 const progressInterval = 100 * time.Millisecond
@@ -158,6 +161,9 @@ func (b *SFTPBridge) Transfer(ctx context.Context, req TransferRequest, connID s
 
 	if req.Move {
 		for _, src := range req.Sources {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			if req.Direction == "upload" {
 				err = os.RemoveAll(src)
 			} else {
@@ -342,22 +348,61 @@ func (b *SFTPBridge) uploadFile(ctx context.Context, it transferItem, t *progres
 	if err := b.client.MkdirAll(path.Dir(it.dst)); err != nil {
 		return err
 	}
-	dst, err := b.client.OpenFile(it.dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC)
+	tmp := path.Join(path.Dir(it.dst), ".terminyxx-"+rand.Text()+".part")
+	dst, err := b.client.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL)
 	if err != nil {
 		return err
 	}
-	_, err = dst.ReadFromWithConcurrency(&countingReader{ctx: ctx, r: src, t: t}, 0)
+	defer func() {
+		if tmp != "" {
+			_ = b.client.Remove(tmp)
+		}
+	}()
+	_ = dst.Chmod(0o600)
+	written, err := dst.ReadFromWithConcurrency(&countingReader{ctx: ctx, r: src, t: t}, 0)
 	if cerr := dst.Close(); err == nil {
 		err = cerr
 	}
 	if err != nil {
-		if errors.Is(err, context.Canceled) {
-			_ = b.client.Remove(it.dst)
-		}
 		return err
 	}
-	_ = b.client.Chmod(it.dst, it.mode)
-	_ = b.client.Chtimes(it.dst, it.mtime, it.mtime)
+	if written != it.size {
+		return errors.New("the source size changed during the transfer")
+	}
+	_ = b.client.Chmod(tmp, it.mode)
+	_ = b.client.Chtimes(tmp, it.mtime, it.mtime)
+	if err := b.publishUpload(ctx, tmp, it.dst); err != nil {
+		return err
+	}
+	tmp = ""
+	return nil
+}
+
+func (b *SFTPBridge) publishUpload(ctx context.Context, tmp, target string) error {
+	info, err := b.client.Lstat(target)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr
+	}
+	if err == nil && !info.Mode().IsRegular() {
+		return fmt.Errorf("cannot replace a non-regular file: %s", target)
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		// Standard SFTP rename fails if a target has appeared in the meantime.
+		return b.client.Rename(tmp, target)
+	}
+	if err != nil {
+		return err
+	}
+	if _, ok := b.client.HasExtension("posix-rename@openssh.com"); !ok {
+		return errors.New("the SFTP server does not support safe replacement of existing files")
+	}
+	if err := b.client.PosixRename(tmp, target); err != nil {
+		var status *sftp.StatusError
+		if errors.As(err, &status) && status.FxCode() == sftp.ErrSSHFxOpUnsupported {
+			return errors.New("the SFTP server does not support safe replacement of existing files")
+		}
+		return fmt.Errorf("could not replace %s: %w", target, err)
+	}
 	return nil
 }
 
@@ -372,24 +417,59 @@ func (b *SFTPBridge) downloadFile(ctx context.Context, it transferItem, t *progr
 		return err
 	}
 	mode := downloadMode(it)
-	dst, err := os.OpenFile(it.dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
+	info, err := os.Lstat(it.dst)
+	if err == nil {
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("cannot replace a non-regular file: %s", it.dst)
+		}
+		if mode != 0o600 {
+			mode = info.Mode().Perm()
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	tmp := filepath.Join(filepath.Dir(it.dst), ".terminyxx-"+rand.Text()+".part")
+	dst, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
 	if err != nil {
 		return err
 	}
-	if mode == 0o600 {
-		// An existing file keeps its old mode on O_TRUNC; tighten it.
-		_ = dst.Chmod(mode)
+	defer func() {
+		if tmp != "" {
+			_ = dst.Close()
+			_ = os.Remove(tmp)
+		}
+	}()
+	if info == nil {
+		// Use the creation mode after the umask has been applied.
+		created, err := dst.Stat()
+		if err != nil {
+			return err
+		}
+		mode = created.Mode().Perm()
 	}
-	_, err = src.WriteTo(&countingWriter{ctx: ctx, w: dst, t: t})
+	if err := dst.Chmod(0o600); err != nil {
+		return err
+	}
+	written, err := src.WriteTo(&countingWriter{ctx: ctx, w: dst, t: t})
 	if cerr := dst.Close(); err == nil {
 		err = cerr
 	}
 	if err != nil {
-		if errors.Is(err, context.Canceled) {
-			_ = os.Remove(it.dst)
-		}
 		return err
 	}
-	_ = os.Chtimes(it.dst, it.mtime, it.mtime)
+	if written != it.size {
+		return errors.New("the source size changed during the transfer")
+	}
+	if err := os.Chmod(tmp, mode); err != nil {
+		return err
+	}
+	_ = os.Chtimes(tmp, it.mtime, it.mtime)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, it.dst); err != nil {
+		return err
+	}
+	tmp = ""
 	return nil
 }

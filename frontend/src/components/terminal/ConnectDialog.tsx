@@ -10,11 +10,13 @@ import type { ProxySettings, SavedTunnel, SSHProfile } from '../../types';
 import { HostNotesFields, sameNotes } from '../sidebar/HostNotesFields';
 import type { NotesValue } from '../sidebar/HostNotesFields';
 import { JumpHostSelect, TunnelEditor } from './TunnelEditor';
-import { Modal, useDialogs } from '../ui/Dialogs';
+import { errorText, Modal, useDialogs } from '../ui/Dialogs';
 import { confirmAgentForwarding } from '../security/securityPrompts';
 import { useSettings } from '../../lib/settings';
-import { SelectKeyFile } from '../../../wailsjs/go/main/App';
+import { SelectKeyFile, TestSSHConnection } from '../../../wailsjs/go/main/App';
+import type { connection } from '../../../wailsjs/go/models';
 import { ComboInput } from '../ui/ComboInput';
+import { SSHDiagnosticChecks } from './SSHDiagnostic';
 
 interface ConnectDialogProps {
   initial?: Partial<SSHProfile>;
@@ -91,6 +93,23 @@ export function ConnectDialog({ initial, folders, onClose, onConnect, onSwitchTo
   const ident = identities.find((i) => i.id === identityId);
   const dialogs = useDialogs();
   const sshSec = useSettings().security.ssh;
+  const [testing, setTesting] = useState(false);
+  const [diagnostic, setDiagnostic] = useState<connection.SSHDiagnostic>();
+  const [testError, setTestError] = useState('');
+
+  const testConnection = async () => {
+    if (!initial?.id || testing) return;
+    setTesting(true);
+    setDiagnostic(undefined);
+    setTestError('');
+    try {
+      setDiagnostic(await TestSSHConnection(initial.id));
+    } catch (err) {
+      setTestError(errorText(err));
+    } finally {
+      setTesting(false);
+    }
+  };
 
   const toggleAgentForwarding = async (on: boolean) => {
     if (on && !(await confirmAgentForwarding(dialogs, host.trim()))) return;
@@ -535,6 +554,19 @@ export function ConnectDialog({ initial, folders, onClose, onConnect, onSwitchTo
                 ]}
               />
             </Field>
+          </div>
+        )}
+
+        {editing && (
+          <div className="space-y-2" aria-live="polite" aria-busy={testing}>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              <button type="button" className="btn-secondary" onClick={() => void testConnection()} disabled={testing}>
+                {testing ? 'Testing…' : 'Test connection'}
+              </button>
+              <span className="text-2xs text-gray-400">Uses the saved profile.</span>
+            </div>
+            {testError && <p className="text-xs text-red-300">{testError}</p>}
+            {diagnostic && <SSHDiagnosticChecks report={diagnostic} />}
           </div>
         )}
 

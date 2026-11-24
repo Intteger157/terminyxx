@@ -242,6 +242,8 @@ export function SyncInventory(arg1:string):Promise<store.InventorySync>;
 
 export function TestBiometrics():Promise<void>;
 
+export function TestSSHConnection(arg1:string):Promise<connection.SSHDiagnostic>;
+
 export function TouchHost(arg1:string,arg2:string):Promise<void>;
 
 export function UnlockApp(arg1:string):Promise<void>;

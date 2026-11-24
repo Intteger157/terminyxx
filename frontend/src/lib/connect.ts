@@ -7,8 +7,13 @@ import { confirmChangedHostKey, confirmNewHostKey } from '../components/security
 type Dialogs = ReturnType<typeof useDialogs>;
 
 export class ConnectCancelled extends Error {}
+export class SSHConnectFailure extends Error {
+  constructor(message: string, readonly diagnostic?: connection.SSHDiagnostic) {
+    super(message);
+  }
+}
 /** A quiet (automatic) connect stopped because it needs the user: password, host key, passphrase. */
-export class ConnectNeedsUser extends Error {}
+export class ConnectNeedsUser extends SSHConnectFailure {}
 
 // Error strings from the Go side (see internal/connection).
 const HOSTKEY_UNKNOWN = 'HOSTKEY_UNKNOWN|';
@@ -16,6 +21,20 @@ const HOSTKEY_MISMATCH = 'HOSTKEY_MISMATCH|';
 const PASSPHRASE = 'KEY_PASSPHRASE_REQUIRED|';
 const LEGACY = 'LEGACY_ALGORITHMS_REQUIRED|';
 const LOCKED = 'app is locked';
+const DIAGNOSTIC = '\nSSH_DIAGNOSTIC|';
+
+function splitSSHError(err: unknown): { message: string; diagnostic?: connection.SSHDiagnostic } {
+  const text = String(err);
+  const marker = text.lastIndexOf(DIAGNOSTIC);
+  if (marker === -1) return { message: text };
+  try {
+    const diagnostic: connection.SSHDiagnostic = JSON.parse(text.slice(marker + DIAGNOSTIC.length));
+    if (Array.isArray(diagnostic?.checks)) return { message: text.slice(0, marker), diagnostic };
+  } catch {
+    // Fall back to the original error if no report could be decoded.
+  }
+  return { message: text };
+}
 
 export interface ConnectResult {
   /** A password the user typed during this connect, and whether to keep it. */
@@ -37,9 +56,10 @@ export async function connectWithPrompts(
 ): Promise<ConnectResult> {
   const interactive = opts.interactive !== false;
   const result: ConnectResult = { rememberPassword: false };
+  let diagnostic: connection.SSHDiagnostic | undefined;
   /** In quiet mode every question to the user ends the attempt instead. */
   const needUser = (why: string) => {
-    if (!interactive) throw new ConnectNeedsUser(why);
+    if (!interactive) throw new ConnectNeedsUser(why, diagnostic);
   };
   const target = `${profile.username}@${profile.host}`;
 
@@ -87,7 +107,15 @@ export async function connectWithPrompts(
       await SSHConnect(connection.ConnectRequest.createFrom({ ...req, jump: [] }));
       return result;
     } catch (err) {
-      const msg = String(err);
+      const { message: msg, diagnostic: report } = splitSSHError(err);
+      diagnostic = report;
+      const failed = report?.checks.at(-1);
+
+      if (failed?.jump && (failed.stage === 'Credentials' || msg.includes('unable to authenticate') || msg.includes(LEGACY))) {
+        const message = `Jump host ${failed.address}: ${failed.failure}`;
+        needUser(message);
+        throw new SSHConnectFailure(message, report);
+      }
 
       if (msg.includes('unable to authenticate')) needUser('authentication failed');
       if (msg.includes('unable to authenticate') && req.authType !== 'key') {
@@ -148,10 +176,10 @@ export async function connectWithPrompts(
         continue;
       }
 
-      throw new Error(humanizeError(msg));
+      throw new SSHConnectFailure(humanizeError(msg), diagnostic);
     }
   }
-  throw new Error('Could not connect');
+  throw new SSHConnectFailure('Could not connect', diagnostic);
 }
 
 export function humanizeError(msg: string): string {

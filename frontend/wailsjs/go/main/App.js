@@ -458,6 +458,10 @@ export function TestBiometrics() {
   return window['go']['main']['App']['TestBiometrics']();
 }
 
+export function TestSSHConnection(arg1) {
+  return window['go']['main']['App']['TestSSHConnection'](arg1);
+}
+
 export function TouchHost(arg1, arg2) {
   return window['go']['main']['App']['TouchHost'](arg1, arg2);
 }

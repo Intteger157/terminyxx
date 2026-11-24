@@ -33,6 +33,7 @@ import { connection } from '../wailsjs/go/models';
 import { RecordingsDialog } from './components/recordings/RecordingsDialog';
 import type { PaneDrag } from './lib/paneDrag';
 import { ConnectDialog } from './components/terminal/ConnectDialog';
+import { SSHDiagnosticDialog } from './components/terminal/SSHDiagnostic';
 import { SftpPanel } from './components/sftp/SftpPanel';
 import { RdpDialog } from './components/rdp/RdpDialog';
 import { RdpPane } from './components/rdp/RdpPane';
@@ -42,7 +43,7 @@ import type { SettingsSection } from './components/settings/SettingsDialog';
 import { useDialogs, errorText, modalSwap } from './components/ui/Dialogs';
 import { checkForUpdate, loadVersion } from './lib/updates';
 import { useHotkeys } from './hooks/useHotkeys';
-import { ConnectCancelled, ConnectNeedsUser, connectWithPrompts } from './lib/connect';
+import { ConnectCancelled, ConnectNeedsUser, connectWithPrompts, SSHConnectFailure } from './lib/connect';
 import { identityById, reloadIdentities, saveIdentity } from './lib/identities';
 import { deleteWorkspace, instantiate, loadLastSession, loadWorkspaces, prune, rememberSession, saveWorkspace, snapshot, useWorkspaces } from './lib/workspaces';
 import type { Workspace, WorkspacePane } from './lib/workspaces';
@@ -90,6 +91,7 @@ function App() {
   const openMenu = useContextMenu();
   // Sessions (one per terminal) and the title-bar tabs that lay them out.
   const [tabs, setTabs] = useState<TerminalTab[]>([]);
+  const [sshDiagnostic, setSSHDiagnostic] = useState<connection.SSHDiagnostic>();
   const [groups, setGroups] = useState<TabGroup[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
   const [connectDialog, setConnectDialog] = useState<ConnectDialogState>(null);
@@ -284,7 +286,7 @@ function App() {
   };
 
   const connectTab = async (tabId: string, profile: SSHProfile): Promise<boolean> => {
-    patchTab(tabId, { status: 'connecting', title: profile.name, host: profile.host, profile });
+    patchTab(tabId, { status: 'connecting', title: profile.name, host: profile.host, profile, sshDiagnostic: undefined });
     try {
       const res = await connectWithPrompts(tabId, profile, dialogs);
       let tabProfile = profile;
@@ -319,9 +321,10 @@ function App() {
       touchHost('ssh', profile.id);
       return true;
     } catch (err) {
-      setTabs((prev) =>
-        prev.map((t) => (t.id === tabId ? { ...t, status: t.started ? 'disconnected' : 'idle' } : t))
-      );
+      const sshDiagnostic = err instanceof SSHConnectFailure ? err.diagnostic : undefined;
+      setTabs((prev) => prev.map((t) =>
+        t.id === tabId ? { ...t, status: t.started ? 'disconnected' : 'idle', sshDiagnostic } : t
+      ));
       if (!(err instanceof ConnectCancelled)) {
         dialogs.toast(`Could not connect to ${profile.host}: ${errorText(err)}`, 'error');
       }
@@ -342,21 +345,22 @@ function App() {
     // keep a password typed for this session.
     const saved = sshProfiles.find((p) => p.id === tab.profile!.id);
     const profile = saved ? { ...saved, password: tab.profile.password } : tab.profile;
-    patchTab(id, { status: 'connecting' });
+    patchTab(id, { status: 'connecting', sshDiagnostic: undefined });
     try {
       await connectWithPrompts(id, profile, dialogs, { interactive: false });
       patchTab(id, { status: 'connected', started: true, retry: undefined });
       dialogs.toast(`Reconnected to ${tab.title}`, 'success');
     } catch (err) {
       if (!tabsRef.current.some((t) => t.id === id && t.retry)) return; // closed or cancelled meanwhile
+      const sshDiagnostic = err instanceof SSHConnectFailure ? err.diagnostic : undefined;
       if (err instanceof ConnectNeedsUser) {
-        patchTab(id, { status: 'disconnected', retry: undefined });
+        patchTab(id, { status: 'disconnected', retry: undefined, sshDiagnostic });
         dialogs.toast(`Could not reconnect to ${tab.title} automatically: ${err.message}. Use Reconnect.`, 'error');
       } else if (err instanceof ConnectCancelled) {
         // App locked: try again later without using up an attempt.
         patchTab(id, { status: 'disconnected', retry: { attempt, at: Date.now() + retryDelay(attempt) } });
       } else if (attempt >= RETRY_MAX) {
-        patchTab(id, { status: 'disconnected', retry: undefined });
+        patchTab(id, { status: 'disconnected', retry: undefined, sshDiagnostic });
         dialogs.toast(`Gave up reconnecting to ${tab.title}: ${errorText(err)}`, 'error');
       } else {
         patchTab(id, { status: 'disconnected', retry: { attempt: attempt + 1, at: Date.now() + retryDelay(attempt + 1) } });
@@ -1106,7 +1110,7 @@ function App() {
                   {tab.status === 'connected' && (
                     <SftpPanel fill connectionId={tab.id} visible={visible} onClose={() => {}} />
                   )}
-                  {tab.status !== 'connected' && <StatusOverlay tab={tab} onReconnect={() => handleReconnect(tab)} onCancelRetry={() => cancelRetry(tab.id)} />}
+                  {tab.status !== 'connected' && <StatusOverlay tab={tab} onReconnect={() => handleReconnect(tab)} onCancelRetry={() => cancelRetry(tab.id)} onDetails={() => setSSHDiagnostic(tab.sshDiagnostic)} />}
                 </>
               ) : tab.started ? (
                 <>
@@ -1120,10 +1124,10 @@ function App() {
                     themeId={(sshProfiles.find((p) => p.id === tab.profile?.id) ?? tab.profile)?.options?.themeId}
                     onSize={(cols, rows) => setSizes((s) => ({ ...s, [tab.id]: { cols, rows } }))}
                   />
-                  {tab.status !== 'connected' && <StatusOverlay tab={tab} onReconnect={() => handleReconnect(tab)} onCancelRetry={() => cancelRetry(tab.id)} />}
+                  {tab.status !== 'connected' && <StatusOverlay tab={tab} onReconnect={() => handleReconnect(tab)} onCancelRetry={() => cancelRetry(tab.id)} onDetails={() => setSSHDiagnostic(tab.sshDiagnostic)} />}
                 </>
               ) : (
-                <PendingTab tab={tab} onConnect={() => (tab.rdp ? void connectRdp(tab.id, tab.rdp) : openConnectDialog(tab.id))} />
+                <PendingTab tab={tab} onConnect={() => (tab.rdp ? void connectRdp(tab.id, tab.rdp) : openConnectDialog(tab.id))} onDetails={() => setSSHDiagnostic(tab.sshDiagnostic)} />
               )
             }
           />
@@ -1285,6 +1289,8 @@ function App() {
         />
       )}
 
+      {sshDiagnostic && <SSHDiagnosticDialog report={sshDiagnostic} onClose={() => setSSHDiagnostic(undefined)} />}
+
       {library.importOpen && (
         <ImportDialog
           existingSSH={sshProfiles}
@@ -1299,7 +1305,7 @@ function App() {
   );
 }
 
-function PendingTab({ tab, onConnect }: { tab: TerminalTab; onConnect: () => void }) {
+function PendingTab({ tab, onConnect, onDetails }: { tab: TerminalTab; onConnect: () => void; onDetails: () => void }) {
   if (tab.status === 'connecting') {
     return (
       <div className="h-full flex flex-col items-center justify-center gap-4 animate-fade-in">
@@ -1318,10 +1324,11 @@ function PendingTab({ tab, onConnect }: { tab: TerminalTab; onConnect: () => voi
   }
   return (
     <div className="h-full flex flex-col items-center justify-center gap-3 text-gray-500">
-      <p>This tab is not connected.</p>
-      <button className="btn-primary" onClick={onConnect}>
-        Connect
-      </button>
+      <p>{tab.sshDiagnostic ? 'SSH connection failed.' : 'This tab is not connected.'}</p>
+      <div className="flex items-center gap-2">
+        {tab.sshDiagnostic && <button className="btn-secondary" onClick={onDetails}>Details</button>}
+        <button className="btn-primary" onClick={onConnect}>Connect</button>
+      </div>
     </div>
   );
 }
@@ -1335,7 +1342,7 @@ function RdpConnecting({ tab }: { tab: TerminalTab }) {
   );
 }
 
-function StatusOverlay({ tab, onReconnect, onCancelRetry }: { tab: TerminalTab; onReconnect: () => void; onCancelRetry: () => void }) {
+function StatusOverlay({ tab, onReconnect, onCancelRetry, onDetails }: { tab: TerminalTab; onReconnect: () => void; onCancelRetry: () => void; onDetails?: () => void }) {
   // Tick once a second while a reconnect is scheduled, for the countdown.
   const [, setNow] = useState(0);
   useEffect(() => {
@@ -1381,8 +1388,9 @@ function StatusOverlay({ tab, onReconnect, onCancelRetry }: { tab: TerminalTab; 
         ) : (
           <>
             <span className="flex items-center gap-2 text-gray-300">
-              <span className="w-1.5 h-1.5 rounded-full bg-red-400" /> Connection closed
+              <span className="w-1.5 h-1.5 rounded-full bg-red-400" /> {tab.sshDiagnostic ? 'SSH connection failed' : 'Connection closed'}
             </span>
+            {tab.sshDiagnostic && onDetails && <button className="btn-ghost h-7 px-2.5" onClick={onDetails}>Details</button>}
             <button className="btn-primary h-7" onClick={onReconnect}>
               <RotateCw size={13} /> Reconnect
             </button>

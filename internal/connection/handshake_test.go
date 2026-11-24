@@ -31,7 +31,8 @@ func TestDialTimesOutOnSilentServer(t *testing.T) {
 	addr := ln.Addr().(*net.TCPAddr)
 	done := make(chan error, 1)
 	go func() {
-		_, _, err := dialSSH(ConnectRequest{Host: "127.0.0.1", Port: addr.Port, Username: "u", AuthType: "password", Password: "p"}, nil, Policy{})
+		var report SSHDiagnostic
+		_, _, err := dialSSH(ConnectRequest{Host: "127.0.0.1", Port: addr.Port, Username: "u", AuthType: "password", Password: "p"}, nil, Policy{}, &report)
 		done <- err
 	}()
 	select {

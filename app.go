@@ -151,9 +151,52 @@ func (a *App) shutdown(ctx context.Context) {
 // SSH bindings
 
 func (a *App) SSHConnect(req connection.ConnectRequest) error {
-	if a.sec.lock != nil && a.sec.lock.Locked() {
-		return connection.ErrLocked
+	if err := a.guard(); err != nil {
+		return err
 	}
+	if err := a.prepareSSHRequest(&req); err != nil {
+		return err
+	}
+	report, err := a.connMgr.ConnectWithDiagnostic(req)
+	if err != nil {
+		err = localNetworkHint(err)
+		if len(report.Checks) == 0 {
+			return err
+		}
+		// Wails sends errors as strings. Keep the original error for the
+		// existing password, passphrase and host key prompts.
+		detail, marshalErr := json.Marshal(report)
+		if marshalErr != nil {
+			return err
+		}
+		return fmt.Errorf("%w\nSSH_DIAGNOSTIC|%s", err, detail)
+	}
+	a.autoStartTunnels(req)
+	return nil
+}
+
+func (a *App) TestSSHConnection(profileID string) (connection.SSHDiagnostic, error) {
+	if err := a.guard(); err != nil {
+		return connection.SSHDiagnostic{}, err
+	}
+	if a.data == nil || profileID == "" {
+		return connection.SSHDiagnostic{}, errors.New("a saved SSH profile is required")
+	}
+	p, err := a.data.GetSSHProfile(profileID)
+	if err != nil {
+		return connection.SSHDiagnostic{}, fmt.Errorf("could not load the saved SSH profile: %w", err)
+	}
+	req := connection.ConnectRequest{
+		Host: p.Host, Port: p.Port, Username: p.Username, AuthType: p.AuthType, KeyPath: p.KeyPath,
+		ProfileID: p.ID, JumpFor: p.ID, AllowLegacyAlgorithms: p.AllowLegacyAlgorithms,
+	}
+	if err := a.prepareSSHRequest(&req); err != nil {
+		return connection.SSHDiagnostic{}, err
+	}
+	return a.connMgr.TestSSH(req), nil
+}
+
+func (a *App) prepareSSHRequest(req *connection.ConnectRequest) error {
 	// Saved hosts keep their password in the OS keychain; the frontend never
 	// receives it, so resolve it here.
 	// The saved password is only ever sent to the saved address: host, port,
@@ -193,10 +236,6 @@ func (a *App) SSHConnect(req connection.ConnectRequest) error {
 		}
 		req.Jump = jump
 	}
-	if err := a.connMgr.Connect(req); err != nil {
-		return localNetworkHint(err)
-	}
-	a.autoStartTunnels(req)
 	return nil
 }
 

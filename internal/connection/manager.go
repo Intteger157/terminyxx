@@ -89,19 +89,25 @@ func (m *ConnectionManager) RemoveTrustedHost(id string) error {
 }
 
 func (m *ConnectionManager) Connect(req ConnectRequest) error {
+	_, err := m.ConnectWithDiagnostic(req)
+	return err
+}
+
+func (m *ConnectionManager) ConnectWithDiagnostic(req ConnectRequest) (SSHDiagnostic, error) {
+	var report SSHDiagnostic
 	if req.ID == "" {
-		return errors.New("connection id is required")
+		return report, errors.New("connection id is required")
 	}
 	if req.Host == "" {
-		return errors.New("host is required")
+		return report, errors.New("host is required")
 	}
 
 	m.emitter.Emit("connection:state:"+req.ID, "connecting")
 	// Dial without holding the lock so other tabs stay responsive.
-	conn, err := newManagedConnection(req, m)
+	conn, err := newManagedConnection(req, m, &report)
 	if err != nil {
 		m.emitter.Emit("connection:state:"+req.ID, "disconnected", CloseFailed)
-		return err
+		return report, err
 	}
 
 	m.mu.Lock()
@@ -123,7 +129,7 @@ func (m *ConnectionManager) Connect(req ConnectRequest) error {
 	}()
 
 	m.emitter.Emit("connection:state:"+req.ID, "connected")
-	return nil
+	return report, nil
 }
 
 // Reasons sent as the second value of connection:state:{id} = "disconnected".

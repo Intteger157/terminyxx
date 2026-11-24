@@ -1,9 +1,9 @@
 package connection
 
 import (
+	"context"
 	"errors"
 	"fmt"
-	"golang.org/x/text/encoding"
 	"io"
 	"log"
 	"net"
@@ -15,6 +15,7 @@ import (
 
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
+	"golang.org/x/text/encoding"
 	"terminyxx/internal/recording"
 )
 
@@ -77,44 +78,53 @@ type ManagedConnection struct {
 // dialSSH connects to req, going through req.Jump (ProxyJump) first. It
 // returns the final client plus the intermediate clients, which must stay
 // open for as long as the final one is used.
-func dialSSH(req ConnectRequest, hostKeys *HostKeyStore, policy Policy) (*ssh.Client, []*ssh.Client, error) {
+func dialSSH(req ConnectRequest, hostKeys *HostKeyStore, policy Policy, report *SSHDiagnostic) (*ssh.Client, []*ssh.Client, error) {
 	var jumps []*ssh.Client
 	var via *ssh.Client
-	closeJumps := func() {
-		for i := len(jumps) - 1; i >= 0; i-- {
-			_ = jumps[i].Close()
-		}
-	}
 	for _, hop := range req.Jump {
 		hop.Jump = nil
 		// A host key the user confirmed applies to whichever hop presents it.
 		hop.AcceptHostKey, hop.ReplaceHostKey = req.AcceptHostKey, req.ReplaceHostKey
-		c, err := dialHop(hop, via, hostKeys, policy)
+		c, err := dialHop(hop, via, hostKeys, policy, report, true)
 		if err != nil {
-			closeJumps()
+			closeJumpClients(jumps)
 			return nil, nil, err
 		}
 		jumps = append(jumps, c)
 		via = c
 	}
-	client, err := dialHop(req, via, hostKeys, policy)
+	client, err := dialHop(req, via, hostKeys, policy, report, false)
 	if err != nil {
-		closeJumps()
+		closeJumpClients(jumps)
 		return nil, nil, err
 	}
 	return client, jumps, nil
 }
 
+func closeJumpClients(jumps []*ssh.Client) {
+	for i := len(jumps) - 1; i >= 0; i-- {
+		_ = jumps[i].Close()
+	}
+}
+
 // dialHop connects to one host, directly or through the via client.
-func dialHop(req ConnectRequest, via *ssh.Client, hostKeys *HostKeyStore, policy Policy) (*ssh.Client, error) {
+func dialHop(req ConnectRequest, via *ssh.Client, hostKeys *HostKeyStore, policy Policy, report *SSHDiagnostic, jump bool) (*ssh.Client, error) {
 	port := req.Port
 	if port == 0 {
 		port = 22
 	}
 	addr := net.JoinHostPort(req.Host, strconv.Itoa(port))
+	check := func(stage, failure string) {
+		report.Checks = append(report.Checks, SSHCheck{Address: addr, Jump: jump, Stage: stage, Failure: failure})
+	}
 
 	auths, cleanup, err := buildAuthMethods(req)
 	if err != nil {
+		failure := "Could not load SSH credentials"
+		if strings.HasPrefix(err.Error(), PassphraseRequiredPrefix+"|") {
+			failure = "The private key needs a passphrase"
+		}
+		check("Credentials", failure)
 		return nil, err
 	}
 	defer cleanup()
@@ -127,6 +137,7 @@ func dialHop(req ConnectRequest, via *ssh.Client, hostKeys *HostKeyStore, policy
 	if hostKeys != nil {
 		cb, algos, err := hostKeys.Callback(addr, req.AcceptHostKey, req.ReplaceHostKey)
 		if err != nil {
+			check("Host key", "Could not read trusted host keys")
 			return nil, err
 		}
 		config.HostKeyCallback = cb
@@ -140,42 +151,93 @@ func dialHop(req ConnectRequest, via *ssh.Client, hostKeys *HostKeyStore, policy
 		legacyAlgorithms(config)
 	}
 
-	var client *ssh.Client
+	var conn net.Conn
+	stage := "TCP connection"
 	if via == nil {
-		// Not ssh.Dial: its Timeout only covers the TCP connect, so a server
-		// that never answers the handshake would hang the connect forever.
-		var conn net.Conn
-		if conn, err = dialDirect(req.Host, port, req.Username, req.Proxy); err == nil {
-			client, err = handshake(conn, addr, config)
-			if cc, ok := conn.(*cmdConn); ok && err != nil && !strings.Contains(err.Error(), "ProxyCommand") {
-				if msg := cc.stderr.String(); msg != "" {
-					err = fmt.Errorf("%w (ProxyCommand: %s)", err, msg)
-				}
-			}
+		if req.Proxy.Type == ProxyCommand {
+			stage = "Start proxy command"
+		} else if req.Proxy.Type != ProxyNone {
+			stage = "Proxy connection"
 		}
+		conn, err = dialDirect(req.Host, port, req.Username, req.Proxy)
 	} else {
-		client, err = dialThrough(via, addr, config)
+		stage = "TCP via jump host"
+		ctx, cancel := context.WithTimeout(context.Background(), dialTimeout)
+		conn, err = via.DialContext(ctx, "tcp", addr)
+		cancel()
+		if err != nil {
+			err = fmt.Errorf("jump host cannot reach %s: %w", addr, err)
+		}
 	}
 	if err != nil {
-		var hk *HostKeyError
-		if errors.As(err, &hk) {
-			return nil, hk
-		}
-		if policy.StrictAlgorithms && !req.AllowLegacyAlgorithms && strings.Contains(err.Error(), "no common algorithm") {
-			return nil, fmt.Errorf("%s|%w", LegacyAlgorithmsPrefix, err)
+		var dns *net.DNSError
+		if errors.As(err, &dns) {
+			if stage == "Proxy connection" {
+				stage = "Proxy DNS lookup"
+			} else {
+				stage = "DNS lookup"
+			}
+			failure := "Could not resolve the hostname"
+			if dns.IsTimeout {
+				failure = "DNS lookup timed out"
+			}
+			check(stage, failure)
+		} else {
+			check(stage, tcpDiagnostic(err))
 		}
 		return nil, err
 	}
-	return client, nil
-}
+	check(stage, "")
 
-// dialThrough opens an SSH session to addr over a channel of the via client.
-func dialThrough(via *ssh.Client, addr string, config *ssh.ClientConfig) (*ssh.Client, error) {
-	conn, err := via.Dial("tcp", addr)
-	if err != nil {
-		return nil, fmt.Errorf("jump host cannot reach %s: %w", addr, err)
+	var keyVerified atomic.Bool
+	verify := config.HostKeyCallback
+	config.HostKeyCallback = func(host string, remote net.Addr, key ssh.PublicKey) error {
+		if err := verify(host, remote, key); err != nil {
+			return err
+		}
+		keyVerified.Store(true)
+		return nil
 	}
-	return handshake(conn, addr, config)
+	// ssh.Dial only bounds the TCP dial. Bound the SSH handshake as well.
+	client, err := handshake(conn, addr, config)
+	if err != nil {
+		var hk *HostKeyError
+		if errors.As(err, &hk) {
+			failure := "The server's host key is not trusted yet"
+			if hk.Mismatch {
+				failure = "The server's host key has changed"
+			}
+			check("Host key", failure)
+			return nil, hk
+		}
+		if cc, ok := conn.(*cmdConn); ok && !strings.Contains(err.Error(), "ProxyCommand") {
+			if msg := cc.stderr.String(); msg != "" {
+				err = fmt.Errorf("%w (ProxyCommand: %s)", err, msg)
+			}
+		}
+		if policy.StrictAlgorithms && !req.AllowLegacyAlgorithms && strings.Contains(err.Error(), "no common algorithm") {
+			check("SSH negotiation", "No compatible algorithms under the current SSH policy")
+			return nil, fmt.Errorf("%s|%w", LegacyAlgorithmsPrefix, err)
+		}
+		if keyVerified.Load() {
+			check("Host key", "")
+			failure := "Could not complete SSH login"
+			if strings.Contains(err.Error(), "unable to authenticate") {
+				failure = "The server rejected the offered login methods"
+			} else if errors.Is(err, errHandshakeTimeout) {
+				failure = "SSH login timed out"
+			}
+			check("Authentication", failure)
+		} else if errors.Is(err, errHandshakeTimeout) {
+			check("SSH negotiation", "SSH handshake timed out")
+		} else {
+			check("SSH negotiation", "Could not complete the SSH handshake")
+		}
+		return nil, err
+	}
+	check("Host key", "")
+	check("Authentication", "")
+	return client, nil
 }
 
 // handshake runs the SSH handshake on conn, closing it after
@@ -205,13 +267,13 @@ func handshake(conn net.Conn, addr string, config *ssh.ClientConfig) (*ssh.Clien
 // only offers algorithms the "modern algorithms only" setting disables.
 const LegacyAlgorithmsPrefix = "LEGACY_ALGORITHMS_REQUIRED"
 
-func newManagedConnection(req ConnectRequest, m *ConnectionManager) (*ManagedConnection, error) {
+func newManagedConnection(req ConnectRequest, m *ConnectionManager, report *SSHDiagnostic) (*ManagedConnection, error) {
 	policy := m.Policy()
 	charset, err := lookupCharset(req.Encoding)
 	if err != nil {
 		return nil, err
 	}
-	client, jumps, err := dialSSH(req, m.hostKeys, policy)
+	client, jumps, err := dialSSH(req, m.hostKeys, policy, report)
 	if err != nil {
 		return nil, err
 	}
@@ -426,9 +488,7 @@ func (c *ManagedConnection) Close() error {
 	if c.client != nil {
 		err := c.client.Close()
 		c.client = nil
-		for i := len(c.jumps) - 1; i >= 0; i-- {
-			_ = c.jumps[i].Close()
-		}
+		closeJumpClients(c.jumps)
 		c.jumps = nil
 		return err
 	}

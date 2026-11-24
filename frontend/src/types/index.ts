@@ -1,4 +1,4 @@
-import type { main } from '../../wailsjs/go/models';
+import type { connection, main } from '../../wailsjs/go/models';
 
 export interface FileEntry {
   name: string;
@@ -167,6 +167,7 @@ export interface TerminalTab {
   /** Set once a shell has run in this tab, so the terminal stays mounted. */
   started: boolean;
   profile?: SSHProfile;
+  sshDiagnostic?: connection.SSHDiagnostic;
   /** Telnet or serial session (no SSH profile). */
   stream?: StreamSpec;
   /** Built-in RDP session (no SSH profile). */
