@@ -176,6 +176,7 @@ type Session struct {
 	drives  map[uint32]*drive
 	handles map[uint32]*handle
 	next    uint32
+	closed  bool
 }
 
 // NewSession opens the drives. A drive whose folder can't be opened is
@@ -209,6 +210,10 @@ func (s *Session) Drives() []Drive {
 func (s *Session) Reset() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.resetLocked()
+}
+
+func (s *Session) resetLocked() {
 	for id, h := range s.handles {
 		h.closeFile()
 		delete(s.handles, id)
@@ -217,9 +222,10 @@ func (s *Session) Reset() {
 
 // Close closes every open file and drive.
 func (s *Session) Close() {
-	s.Reset()
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.closed = true
+	s.resetLocked()
 	for _, d := range s.drives {
 		_ = d.root.Close()
 	}
@@ -245,6 +251,12 @@ func (s *Session) Do(req Request) Reply {
 		// The client answers the metadata queries that usually follow from this.
 		reply.Stat, _ = h.stat()
 		s.mu.Lock()
+		if s.closed {
+			s.mu.Unlock()
+			h.closeFile()
+			reply.Status, reply.Information, reply.Stat = StatusInvalidHandle, 0, nil
+			return reply
+		}
 		id := s.next
 		for s.handles[id] != nil || id == 0 {
 			id++

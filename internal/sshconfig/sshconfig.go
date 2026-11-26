@@ -4,12 +4,16 @@ package sshconfig
 
 import (
 	"bufio"
+	"bytes"
+	"errors"
 	"io"
 	"os"
 	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"terminyxx/internal/importfile"
 )
 
 // Host is the effective configuration for one concrete Host alias.
@@ -32,7 +36,11 @@ type block struct {
 // ParseFile reads path (following Include directives) and returns the
 // concrete hosts it defines, in file order.
 func ParseFile(p string) ([]Host, error) {
-	blocks, err := readBlocks(p, filepath.Dir(p), 0)
+	remaining := int64(importfile.MaxSize)
+	blocks, err := readBlocks(p, filepath.Dir(p), 0, &remaining)
+	if errors.Is(err, importfile.ErrTooLarge) {
+		return nil, errors.New("the OpenSSH configuration and its includes exceed 16 MiB")
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -41,23 +49,23 @@ func ParseFile(p string) ([]Host, error) {
 
 // Parse reads config text (Include directives are ignored).
 func Parse(r io.Reader) ([]Host, error) {
-	blocks, err := parse(r, "", 0)
+	blocks, err := parse(r, "", 0, nil)
 	if err != nil {
 		return nil, err
 	}
 	return resolve(blocks), nil
 }
 
-func readBlocks(p, baseDir string, depth int) ([]block, error) {
-	f, err := os.Open(p)
+func readBlocks(p, baseDir string, depth int, remaining *int64) ([]block, error) {
+	data, err := importfile.Read(p, *remaining)
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
-	return parse(f, baseDir, depth)
+	*remaining -= int64(len(data))
+	return parse(bytes.NewReader(data), baseDir, depth, remaining)
 }
 
-func parse(r io.Reader, baseDir string, depth int) ([]block, error) {
+func parse(r io.Reader, baseDir string, depth int, remaining *int64) ([]block, error) {
 	// Options before the first Host apply to every host.
 	blocks := []block{{patterns: []string{"*"}, opts: map[string]string{}}}
 	cur := &blocks[0]
@@ -89,7 +97,10 @@ func parse(r io.Reader, baseDir string, depth int) ([]block, error) {
 				}
 				matches, _ := filepath.Glob(pat)
 				for _, m := range matches {
-					inc, err := readBlocks(m, baseDir, depth+1)
+					inc, err := readBlocks(m, baseDir, depth+1, remaining)
+					if errors.Is(err, importfile.ErrTooLarge) {
+						return nil, err
+					}
 					if err != nil {
 						continue
 					}

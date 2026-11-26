@@ -1,9 +1,11 @@
 package rdpgw
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
+	"errors"
 	"net/http"
 	"time"
 
@@ -18,29 +20,26 @@ import (
 const channelTicketTTL = 5 * time.Minute
 
 type channelTicket struct {
-	tabID   string
-	name    string
+	attempt *Attempt
+	handler ChannelHandler
 	expires time.Time
 }
 
 // ChannelHandler serves one side channel until ws closes.
-type ChannelHandler func(tabID string, ws *websocket.Conn)
+type ChannelHandler func(ctx context.Context, ws *websocket.Conn)
 
-// SetChannelHandler registers the handler of the side channel name.
-func (g *Gateway) SetChannelHandler(name string, h ChannelHandler) {
+// IssueChannel binds a single-use URL to this attempt's drive session.
+// On success the attempt owns cleanup.
+func (a *Attempt) IssueChannel(handler ChannelHandler, cleanup func()) (string, error) {
+	g := a.g
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if g.handlers == nil {
-		g.handlers = map[string]ChannelHandler{}
+	if err := a.ctx.Err(); err != nil {
+		return "", err
 	}
-	g.handlers[name] = h
-}
-
-// IssueChannel returns the URL that opens side channel name for tabID; the
-// token in it works once and expires after a few minutes.
-func (g *Gateway) IssueChannel(tabID, name string) (string, error) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
+	if a.driveIssued || handler == nil {
+		return "", errors.New("cannot issue RDP drive ticket")
+	}
 	addr, err := g.ensureListening()
 	if err != nil {
 		return "", err
@@ -55,32 +54,34 @@ func (g *Gateway) IssueChannel(tabID, name string) (string, error) {
 		g.chTickets = map[string]*channelTicket{}
 	}
 	for k, t := range g.chTickets {
-		if now.After(t.expires) || (t.tabID == tabID && t.name == name) {
+		if now.After(t.expires) || t.attempt == a {
 			delete(g.chTickets, k)
 		}
 	}
-	g.chTickets[token] = &channelTicket{tabID: tabID, name: name, expires: now.Add(channelTicketTTL)}
+	g.chTickets[token] = &channelTicket{attempt: a, handler: handler, expires: now.Add(channelTicketTTL)}
+	a.driveCleanup = cleanup
+	a.driveIssued = true
 	return "ws://" + addr + "/channel?t=" + token, nil
 }
 
-func (g *Gateway) takeChannel(token string) (*channelTicket, ChannelHandler) {
+func (g *Gateway) takeChannel(token string) *channelTicket {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	for k, t := range g.chTickets {
 		if subtle.ConstantTimeCompare([]byte(k), []byte(token)) == 1 {
 			delete(g.chTickets, k)
-			if time.Now().After(t.expires) {
-				return nil, nil
+			if time.Now().After(t.expires) || t.attempt.ctx.Err() != nil {
+				return nil
 			}
-			return t, g.handlers[t.name]
+			return t
 		}
 	}
-	return nil, nil
+	return nil
 }
 
 func (g *Gateway) serveChannel(w http.ResponseWriter, r *http.Request) {
-	t, h := g.takeChannel(r.URL.Query().Get("t"))
-	if t == nil || h == nil {
+	t := g.takeChannel(r.URL.Query().Get("t"))
+	if t == nil {
 		http.Error(w, "invalid ticket", http.StatusUnauthorized)
 		return
 	}
@@ -89,43 +90,37 @@ func (g *Gateway) serveChannel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ws.SetReadLimit(maxMessage)
+	a := t.attempt
 	g.mu.Lock()
-	if g.channels == nil {
-		g.channels = map[string][]*websocket.Conn{}
+	if a.ctx.Err() != nil {
+		g.mu.Unlock()
+		_ = ws.Close()
+		return
 	}
-	g.channels[t.tabID] = append(g.channels[t.tabID], ws)
+	if g.channels == nil {
+		g.channels = map[string]*websocket.Conn{}
+	}
+	g.channels[a.id] = ws
 	g.mu.Unlock()
 	defer func() {
 		_ = ws.Close()
 		g.mu.Lock()
-		list := g.channels[t.tabID]
-		for i, c := range list {
-			if c == ws {
-				g.channels[t.tabID] = append(list[:i], list[i+1:]...)
-				break
-			}
-		}
-		if len(g.channels[t.tabID]) == 0 {
-			delete(g.channels, t.tabID)
+		if g.channels[a.id] == ws {
+			delete(g.channels, a.id)
 		}
 		g.mu.Unlock()
 	}()
-	h(t.tabID, ws)
+	t.handler(a.ctx, ws)
 }
 
-// closeChannels closes the side channels of tabID, or of every tab when
-// tabID is empty. The caller holds g.mu.
+// closeChannelsLocked closes the side channels of tabID. The caller holds g.mu.
 func (g *Gateway) closeChannelsLocked(tabID string) {
-	for tab, list := range g.channels {
-		if tabID != "" && tab != tabID {
-			continue
-		}
-		for _, c := range list {
-			_ = c.Close()
-		}
+	if c := g.channels[tabID]; c != nil {
+		_ = c.Close()
 	}
+	delete(g.channels, tabID)
 	for k, t := range g.chTickets {
-		if tabID == "" || t.tabID == tabID {
+		if t.attempt.id == tabID {
 			delete(g.chTickets, k)
 		}
 	}

@@ -70,10 +70,11 @@ function confirmCert(dialogs: Dialogs, c: CertInfo): Promise<boolean> {
  * Throws ConnectCancelled if the user backs out.
  */
 export async function openRdpSession(
-  tabId: string,
+  connectionId: string,
   profile: RDPProfile,
   dialogs: Dialogs,
-  password = ''
+  password: string,
+  signal: AbortSignal
 ): Promise<main.RDPSession> {
   // Ask before RDPOpen: its ticket is only valid for a minute.
   if (!password && !profile.hasPassword) {
@@ -83,15 +84,17 @@ export async function openRdpSession(
       password: true,
       confirmLabel: 'Connect',
     });
-    if (pw === null) throw new ConnectCancelled();
+    if (pw === null || signal.aborted) throw new ConnectCancelled();
     password = pw;
   }
   let accept = '';
   for (;;) {
+    if (signal.aborted) throw new ConnectCancelled();
     let session: main.RDPSession;
     try {
-      session = await RDPOpen(tabId, profile.id, password, accept);
+      session = await RDPOpen(connectionId, profile.id, password, accept);
     } catch (err) {
+      if (signal.aborted) throw new ConnectCancelled();
       const msg = errorText(err);
       const cert = parseCert(msg);
       if (cert && !accept) {

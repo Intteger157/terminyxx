@@ -2,15 +2,14 @@ package main
 
 import (
 	"errors"
-	"fmt"
-	"io"
 	"net/url"
-	"os"
 	"os/exec"
 	goruntime "runtime"
 	"strings"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
+
+	"terminyxx/internal/importfile"
 )
 
 // errURLNotAllowed is returned for anything but an http(s) URL with a host.
@@ -73,17 +72,5 @@ const maxSyncFileSize = 64 << 20
 
 // readFileLimited reads a whole file, refusing files larger than limit.
 func readFileLimited(path string, limit int64) ([]byte, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	data, err := io.ReadAll(io.LimitReader(f, limit+1))
-	if err != nil {
-		return nil, err
-	}
-	if int64(len(data)) > limit {
-		return nil, fmt.Errorf("the file is larger than %d MB", limit>>20)
-	}
-	return data, nil
+	return importfile.Read(path, limit)
 }

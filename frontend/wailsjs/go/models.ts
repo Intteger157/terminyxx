@@ -1172,6 +1172,7 @@ export namespace store {
 	    snippets: number;
 	    identities: number;
 	    replaced: string[];
+	    skippedConflicts: string[];
 	    flagsReset: number;
 	    rdpRedirectionSkipped: number;
 	
@@ -1186,6 +1187,7 @@ export namespace store {
 	        this.snippets = source["snippets"];
 	        this.identities = source["identities"];
 	        this.replaced = source["replaced"];
+	        this.skippedConflicts = source["skippedConflicts"];
 	        this.flagsReset = source["flagsReset"];
 	        this.rdpRedirectionSkipped = source["rdpRedirectionSkipped"];
 	    }

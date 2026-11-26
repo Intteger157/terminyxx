@@ -34,28 +34,55 @@ const (
 type Gateway struct {
 	trust *TrustStore
 
-	mu      sync.Mutex
-	ln      net.Listener
-	srv     *http.Server
-	tickets map[string]*ticket
-	live    map[string]*liveSession // by tab id
-	errs    map[string]string       // last failure by tab id
+	mu       sync.Mutex
+	ln       net.Listener
+	srv      *http.Server
+	stopped  bool
+	attempts map[string]*Attempt
+	tickets  map[string]*ticket
+	live     map[string]*liveSession // by tab id
+	errs     map[string]string       // last failure by tab id
 
-	handlers  map[string]ChannelHandler
 	chTickets map[string]*channelTicket
-	channels  map[string][]*websocket.Conn // side channels by tab id
+	channels  map[string]*websocket.Conn // by attempt ID
 }
 
 type ticket struct {
-	tabID   string
+	attempt *Attempt
 	host    string
 	port    int
 	expires time.Time
 }
 
+// Attempt identifies a connection from its certificate probe through relay.
+// Replacing or closing an attempt cancels its context.
+type Attempt struct {
+	g            *Gateway
+	id           string
+	ctx          context.Context
+	cancel       context.CancelFunc
+	driveCleanup func()
+	relayIssued  bool
+	driveIssued  bool
+}
+
+type closedAttempt struct {
+	relay        *liveSession
+	driveCleanup func()
+}
+
+func (c closedAttempt) close() {
+	if c.relay != nil {
+		c.relay.close()
+	}
+	if c.driveCleanup != nil {
+		c.driveCleanup()
+	}
+}
+
 type liveSession struct {
 	ws   *websocket.Conn
-	conn net.Conn
+	conn *tls.Conn
 
 	// Traffic, for diagnostics: bytes relayed each way, and when the write
 	// in progress started (0 when none), which shows a side that stopped reading.
@@ -68,8 +95,9 @@ type liveSession struct {
 func (g *Gateway) Traffic(tabID string) (up, down int64, upStall, downStall time.Duration, ok bool) {
 	g.mu.Lock()
 	l := g.live[tabID]
+	active := l != nil && l.conn != nil
 	g.mu.Unlock()
-	if l == nil {
+	if !active {
 		return 0, 0, 0, 0, false
 	}
 	stall := func(since int64) time.Duration {
@@ -85,12 +113,15 @@ func (g *Gateway) Traffic(tabID string) (up, down int64, upStall, downStall time
 // the drive trace.
 func (g *Gateway) TCPInfo(tabID string) string {
 	g.mu.Lock()
-	l := g.live[tabID]
+	var conn *tls.Conn
+	if l := g.live[tabID]; l != nil {
+		conn = l.conn
+	}
 	g.mu.Unlock()
-	if l == nil || l.conn == nil {
+	if conn == nil {
 		return ""
 	}
-	return tcpInfo(l.conn)
+	return tcpInfo(conn)
 }
 
 func (l *liveSession) close() {
@@ -98,12 +129,12 @@ func (l *liveSession) close() {
 		_ = l.ws.Close()
 	}
 	if l.conn != nil {
-		_ = l.conn.Close()
+		_ = l.conn.NetConn().Close()
 	}
 }
 
 func New(trust *TrustStore) *Gateway {
-	return &Gateway{trust: trust, tickets: map[string]*ticket{}, live: map[string]*liveSession{}, errs: map[string]string{}}
+	return &Gateway{trust: trust, attempts: map[string]*Attempt{}, tickets: map[string]*ticket{}, live: map[string]*liveSession{}, errs: map[string]string{}}
 }
 
 func (g *Gateway) Trust() *TrustStore { return g.trust }
@@ -126,11 +157,48 @@ func (g *Gateway) ensureListening() (string, error) {
 	return ln.Addr().String(), nil
 }
 
-// Issue creates a ticket for tabID to reach host:port and returns the
+// Begin registers the attempt before the certificate probe can start.
+func (g *Gateway) Begin(parent context.Context, id string) *Attempt {
+	ctx, cancel := context.WithCancel(parent)
+	a := &Attempt{g: g, id: id, ctx: ctx, cancel: cancel}
+	g.mu.Lock()
+	old := g.closeLocked(id)
+	if g.stopped {
+		cancel()
+	} else {
+		g.attempts[id] = a
+	}
+	g.mu.Unlock()
+	old.close()
+	return a
+}
+
+func (a *Attempt) Context() context.Context { return a.ctx }
+
+// Close revokes this attempt if it is still current.
+func (a *Attempt) Close() {
+	g := a.g
+	g.mu.Lock()
+	var closed closedAttempt
+	if g.attempts[a.id] == a {
+		closed = g.closeLocked(a.id)
+	}
+	g.mu.Unlock()
+	closed.close()
+}
+
+// Issue creates a ticket to reach host:port and returns the
 // WebSocket URL and the token the client must send as proxy_auth.
-func (g *Gateway) Issue(tabID, host string, port int) (url, token string, err error) {
+func (a *Attempt) Issue(host string, port int) (url, token string, err error) {
+	g := a.g
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	if err := a.ctx.Err(); err != nil {
+		return "", "", err
+	}
+	if a.relayIssued {
+		return "", "", errors.New("RDP ticket already issued")
+	}
 	addr, err := g.ensureListening()
 	if err != nil {
 		return "", "", err
@@ -142,28 +210,31 @@ func (g *Gateway) Issue(tabID, host string, port int) (url, token string, err er
 	token = hex.EncodeToString(buf)
 	now := time.Now()
 	for k, t := range g.tickets {
-		if now.After(t.expires) || t.tabID == tabID {
+		if now.After(t.expires) || t.attempt == a {
 			delete(g.tickets, k)
 		}
 	}
-	g.tickets[token] = &ticket{tabID: tabID, host: host, port: port, expires: now.Add(ticketTTL)}
-	delete(g.errs, tabID)
+	g.tickets[token] = &ticket{attempt: a, host: host, port: port, expires: now.Add(ticketTTL)}
+	a.relayIssued = true
+	delete(g.errs, a.id)
 	return "ws://" + addr + "/rdp", token, nil
 }
 
-func (g *Gateway) take(token string) *ticket {
+func (g *Gateway) take(token string, ws *websocket.Conn) (*ticket, *liveSession) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	for k, t := range g.tickets {
 		if subtle.ConstantTimeCompare([]byte(k), []byte(token)) == 1 {
 			delete(g.tickets, k)
-			if time.Now().After(t.expires) {
-				return nil
+			if time.Now().After(t.expires) || t.attempt.ctx.Err() != nil || g.live[t.attempt.id] != nil {
+				return nil, nil
 			}
-			return t
+			l := &liveSession{ws: ws}
+			g.live[t.attempt.id] = l
+			return t, l
 		}
 	}
-	return nil
+	return nil, nil
 }
 
 // LastError returns why the most recent session of tabID failed on the
@@ -174,39 +245,53 @@ func (g *Gateway) LastError(tabID string) string {
 	return g.errs[tabID]
 }
 
-func (g *Gateway) setErr(tabID string, err error) {
+func (a *Attempt) setErr(err error) {
+	g := a.g
 	g.mu.Lock()
-	g.errs[tabID] = err.Error()
+	if g.attempts[a.id] == a {
+		g.errs[a.id] = err.Error()
+	}
 	g.mu.Unlock()
 }
 
 // Close ends the session of tabID, if any.
 func (g *Gateway) Close(tabID string) {
 	g.mu.Lock()
-	l := g.live[tabID]
+	closed := g.closeLocked(tabID)
+	g.mu.Unlock()
+	closed.close()
+}
+
+func (g *Gateway) closeLocked(tabID string) closedAttempt {
+	c := closedAttempt{relay: g.live[tabID]}
+	if a := g.attempts[tabID]; a != nil {
+		a.cancel()
+		c.driveCleanup = a.driveCleanup
+		delete(g.attempts, tabID)
+	}
 	delete(g.live, tabID)
+	delete(g.errs, tabID)
 	for k, t := range g.tickets {
-		if t.tabID == tabID {
+		if t.attempt.id == tabID {
 			delete(g.tickets, k)
 		}
 	}
 	g.closeChannelsLocked(tabID)
-	g.mu.Unlock()
-	if l != nil {
-		l.close()
-	}
+	return c
 }
 
 // Shutdown closes every session and the listener.
 func (g *Gateway) Shutdown() {
 	g.mu.Lock()
-	live := g.live
-	g.live = map[string]*liveSession{}
-	g.closeChannelsLocked("")
+	g.stopped = true
+	var closed []closedAttempt
+	for id := range g.attempts {
+		closed = append(closed, g.closeLocked(id))
+	}
 	srv := g.srv
 	g.mu.Unlock()
-	for _, l := range live {
-		l.close()
+	for _, attempt := range closed {
+		attempt.close()
 	}
 	if srv != nil {
 		_ = srv.Close()
@@ -296,8 +381,9 @@ func (e *tlsError) Error() string { return "TLS handshake failed: " + e.err.Erro
 func (e *tlsError) Unwrap() error { return e.err }
 
 var upgrader = websocket.Upgrader{
-	ReadBufferSize:  64 << 10,
-	WriteBufferSize: 64 << 10,
+	ReadBufferSize:   64 << 10,
+	WriteBufferSize:  64 << 10,
+	HandshakeTimeout: 5 * time.Second,
 	// The single-use ticket authorizes the session; the page origin differs
 	// between platforms and wails dev.
 	CheckOrigin: func(*http.Request) bool { return true },
@@ -309,12 +395,12 @@ func (g *Gateway) serveWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ws.SetReadLimit(maxMessage)
-	if err := g.session(r.Context(), ws); err != nil {
+	if err := g.session(ws); err != nil && !errors.Is(err, context.Canceled) {
 		log.Printf("rdpgw: %v", err)
 	}
 }
 
-func (g *Gateway) session(ctx context.Context, ws *websocket.Conn) error {
+func (g *Gateway) session(ws *websocket.Conn) error {
 	defer ws.Close()
 	_ = ws.SetReadDeadline(time.Now().Add(30 * time.Second))
 	var buf []byte
@@ -347,13 +433,24 @@ func (g *Gateway) session(ctx context.Context, ws *websocket.Conn) error {
 	if err != nil {
 		return err
 	}
-	t := g.take(req.ProxyAuth)
+	t, l := g.take(req.ProxyAuth, ws)
 	if t == nil {
 		_ = ws.WriteMessage(websocket.BinaryMessage, encodeError(pduError{Code: errGeneral, HTTPStatus: 401}))
 		return errors.New("invalid or expired ticket")
 	}
+	a := t.attempt
+	defer func() {
+		g.mu.Lock()
+		if g.live[a.id] == l {
+			delete(g.live, a.id)
+		}
+		g.mu.Unlock()
+	}()
 	fail := func(code int, e error) error {
-		g.setErr(t.tabID, e)
+		if err := a.ctx.Err(); err != nil {
+			return err
+		}
+		a.setErr(e)
 		_ = ws.WriteMessage(websocket.BinaryMessage, encodeError(pduError{Code: code}))
 		return e
 	}
@@ -361,7 +458,7 @@ func (g *Gateway) session(ctx context.Context, ws *websocket.Conn) error {
 		return fail(errGeneral, errors.New("unsupported connection request"))
 	}
 
-	conn, resp, neg, err := dialServer(ctx, t.host, t.port, req.X224)
+	conn, resp, neg, err := dialServer(a.ctx, t.host, t.port, req.X224)
 	if err != nil {
 		var de *dialError
 		var te *tlsError
@@ -377,15 +474,24 @@ func (g *Gateway) session(ctx context.Context, ws *websocket.Conn) error {
 		return fail(errGeneral, err)
 	}
 	if neg.failed {
-		g.setErr(t.tabID, errors.New(negotiationFailureText(neg.code)))
+		a.setErr(errors.New(negotiationFailureText(neg.code)))
 		_ = ws.WriteMessage(websocket.BinaryMessage, encodeNegotiationError(resp))
 		return nil
+	}
+	defer conn.Close()
+	g.mu.Lock()
+	err = a.ctx.Err()
+	if err == nil {
+		l.conn = conn
+	}
+	g.mu.Unlock()
+	if err != nil {
+		return err
 	}
 
 	dest := net.JoinHostPort(t.host, strconv.Itoa(t.port))
 	certs := conn.ConnectionState().PeerCertificates
 	if err := g.trust.Check(dest, t.host, certs); err != nil {
-		conn.Close()
 		return fail(errUntrusted, err)
 	}
 	chain := make([][]byte, len(certs))
@@ -394,30 +500,11 @@ func (g *Gateway) session(ctx context.Context, ws *websocket.Conn) error {
 	}
 	out, err := encodeResponse(conn.RemoteAddr().String(), resp, chain)
 	if err != nil {
-		conn.Close()
 		return fail(errGeneral, err)
 	}
 	if err := ws.WriteMessage(websocket.BinaryMessage, out); err != nil {
-		conn.Close()
 		return err
 	}
-
-	l := &liveSession{ws: ws, conn: conn}
-	g.mu.Lock()
-	prev := g.live[t.tabID]
-	g.live[t.tabID] = l
-	g.mu.Unlock()
-	if prev != nil {
-		prev.close()
-	}
-	defer func() {
-		g.mu.Lock()
-		if g.live[t.tabID] == l {
-			delete(g.live, t.tabID)
-		}
-		g.mu.Unlock()
-		l.close()
-	}()
 	relay(ws, conn, l)
 	return nil
 }

@@ -5,7 +5,6 @@ import (
 	"io/fs"
 	"strconv"
 	"strings"
-	"sync"
 )
 
 // FirstDeviceID is the RDPDR device ID of the first drive; printers use small
@@ -63,59 +62,6 @@ func Plan(paths []string, all, readOnly bool) []Drive {
 		d.Name = name
 	}
 	return drives
-}
-
-// Manager keeps the drive session of each RDP tab.
-type Manager struct {
-	mu       sync.Mutex
-	sessions map[string]*Session
-}
-
-func NewManager() *Manager {
-	return &Manager{sessions: map[string]*Session{}}
-}
-
-// Open starts the drive session of tab, replacing an earlier one, and returns
-// the drives that could be opened and those that could not.
-func (m *Manager) Open(tab string, drives []Drive) (opened, failed []Drive) {
-	s, failed := NewSession(drives)
-	m.mu.Lock()
-	old := m.sessions[tab]
-	m.sessions[tab] = s
-	m.mu.Unlock()
-	if old != nil {
-		old.Close()
-	}
-	return s.Drives(), failed
-}
-
-// Get returns the drive session of tab, or nil.
-func (m *Manager) Get(tab string) *Session {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.sessions[tab]
-}
-
-// Close ends the drive session of tab.
-func (m *Manager) Close(tab string) {
-	m.mu.Lock()
-	s := m.sessions[tab]
-	delete(m.sessions, tab)
-	m.mu.Unlock()
-	if s != nil {
-		s.Close()
-	}
-}
-
-// CloseAll ends every drive session.
-func (m *Manager) CloseAll() {
-	m.mu.Lock()
-	sessions := m.sessions
-	m.sessions = map[string]*Session{}
-	m.mu.Unlock()
-	for _, s := range sessions {
-		s.Close()
-	}
 }
 
 // isEscape reports os.Root refusing a path or link that leads outside the drive.

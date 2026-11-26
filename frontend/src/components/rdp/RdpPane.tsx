@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Download, FolderOpen, Minimize2, Unplug, Upload, X } from 'lucide-react';
 import type { IronError, UserInteraction } from '@devolutions/iron-remote-desktop';
 import type { DroppedFile, FileInfo, RdpFileTransferProvider } from '@devolutions/iron-remote-desktop-rdp';
-import { ListLocalPrinters, RDPClose, RDPLastError, RDPOpenSaveFolder, RDPPickSaveFolder } from '../../../wailsjs/go/main/App';
+import { ListLocalPrinters, RDPLastError, RDPOpenSaveFolder, RDPPickSaveFolder } from '../../../wailsjs/go/main/App';
 import type { main } from '../../../wailsjs/go/models';
 import { RdpAudioPlayer } from '../../lib/rdpAudio';
 import { DiskStorageBackend, TRANSFER_CHUNK, printSink, saveRemoteFiles, sessionPrinters } from '../../lib/rdpFiles';
@@ -124,7 +124,7 @@ export function RdpPane({
   onEnded,
 }: {
   tabId: string;
-  session: main.RDPSession;
+  session: main.RDPSession & { connectionId: string };
   visible: boolean;
   focused: boolean;
   dynamicResolution: boolean;
@@ -133,9 +133,9 @@ export function RdpPane({
   title?: string;
   onExitFullscreen?: () => void;
   onDisconnect?: () => void;
-  onConnected: () => void;
+  onConnected: (connectionId: string) => void;
   /** error is null when the session ended normally. */
-  onEnded: (error: string | null, authFailed: boolean) => void;
+  onEnded: (connectionId: string, error: string | null, authFailed: boolean) => void;
 }) {
   const host = useRef<HTMLDivElement>(null);
   const element = useRef<HTMLElement | null>(null);
@@ -265,6 +265,7 @@ export function RdpPane({
           driveChannel = new DriveChannel(
             session.driveUrl,
             (r) => {
+              if (cancelled) return;
               try {
                 ui.current?.invokeExtension(rdp.driveReply(r));
               } catch (e) {
@@ -275,6 +276,9 @@ export function RdpPane({
               if (accepted || cancelled) return;
               const name = drives.find((d) => d.deviceId === deviceId)?.name ?? 'a folder';
               dialogs.toast(`The remote computer didn't add the shared folder ${name}`, 'error');
+            },
+            () => {
+              if (!cancelled) dialogs.toast('Shared folders disconnected because too many requests were in progress. Reconnect to restore access.', 'error');
             },
             session.driveTrace
           );
@@ -302,19 +306,21 @@ export function RdpPane({
         stretch();
         // Again after the component's own rescale 150 ms after it is shown.
         window.setTimeout(() => !cancelled && stretch(), 400);
-        cb.current.onConnected();
+        cb.current.onConnected(session.connectionId);
         if (focused) el.focus();
         // The pane may have changed while connecting (full screen, sidebar), and
         // a resize sent before Display Control is up is dropped: check again.
         window.setTimeout(() => syncSize.current(), 1500);
         await info.run();
-        live.current = false;
-        if (!cancelled) cb.current.onEnded(null, false);
+        if (!cancelled) {
+          live.current = false;
+          cb.current.onEnded(session.connectionId, null, false);
+        }
       } catch (err) {
-        live.current = false;
         if (cancelled) return;
-        const { text, auth } = await describe(err, tabId, !connected);
-        cb.current.onEnded(text, auth);
+        live.current = false;
+        const { text, auth } = await describe(err, session.connectionId, !connected);
+        if (!cancelled) cb.current.onEnded(session.connectionId, text, auth);
       }
     };
     return () => {
@@ -330,7 +336,6 @@ export function RdpPane({
       } catch {
         // already ended
       }
-      RDPClose(tabId).catch(() => {});
       files.current = null;
       element.current?.remove();
       element.current = null;

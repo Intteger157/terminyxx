@@ -2,11 +2,11 @@ package importers
 
 import (
 	"net/url"
-	"os"
 	"path/filepath"
 	"strings"
 
 	"gopkg.in/yaml.v3"
+	"terminyxx/internal/importfile"
 )
 
 // Tabby (formerly Terminus) keeps profiles in config.yaml:
@@ -54,7 +54,7 @@ type tabbyConfig struct {
 
 func readTabby(paths []string) (Result, error) {
 	res := Result{Path: paths[0], Skipped: map[string]int{}}
-	data, err := os.ReadFile(paths[0])
+	data, err := importfile.Read(paths[0], importfile.MaxSize)
 	if err != nil {
 		return res, err
 	}

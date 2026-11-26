@@ -173,7 +173,7 @@ export interface TerminalTab {
   /** Built-in RDP session (no SSH profile). */
   rdp?: RDPProfile;
   /** The current single-use RDP session ticket; a new one restarts the pane. */
-  rdpSession?: main.RDPSession;
+  rdpSession?: main.RDPSession & { connectionId: string };
   /** Automatic reconnect after a dropped connection: the next attempt and when it runs (ms). */
   retry?: { attempt: number; at: number };
 }

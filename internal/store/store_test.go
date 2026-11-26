@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"database/sql"
 	"errors"
 	"os"
@@ -40,7 +41,7 @@ func TestMigrateLegacyDatabase(t *testing.T) {
 INSERT INTO ssh_profiles (id, name, host, port, username, auth_type, password, key_path)
 VALUES ('a', 'Zeta', 'z.example', 22, 'root', 'password', 'hunter2', ''),
        ('b', 'Alpha', 'a.example', 2222, 'deploy', 'key', '', '~/.ssh/id_ed25519');
-INSERT INTO rdp_profiles (id, name, host) VALUES ('r', 'Office', 'office.local');`)
+INSERT INTO rdp_profiles (id, name, host, password) VALUES ('r', 'Office', 'office.local', 'old-rdp-fixture');`)
 	must(t, err)
 	db.Close()
 
@@ -76,8 +77,15 @@ INSERT INTO rdp_profiles (id, name, host) VALUES ('r', 'Office', 'office.local')
 	}
 	r, err := s.ListRDPProfiles()
 	must(t, err)
-	if len(r) != 1 || r[0].Name != "Office" {
+	if len(r) != 1 || r[0].Name != "Office" || !r[0].HasPassword || r[0].Password != "" {
 		t.Fatalf("rdp not migrated: %+v", r)
+	}
+	if v, err := sec.Get("rdp:r"); err != nil || v != "old-rdp-fixture" {
+		t.Fatal("legacy RDP password was not moved to the keychain")
+	}
+	must(t, s.db.QueryRow(`SELECT password FROM rdp_profiles WHERE id='r'`).Scan(&col))
+	if col != "" {
+		t.Fatal("plaintext RDP password left in the database")
 	}
 
 	// Re-opening is a no-op.
@@ -90,6 +98,81 @@ INSERT INTO rdp_profiles (id, name, host) VALUES ('r', 'Office', 'office.local')
 type failingSecrets struct{ *MemorySecrets }
 
 func (*failingSecrets) Set(string, string) error { return errors.New("no keychain") }
+
+func TestLegacyRDPPasswordMigrationRetriesWithUnlockedVault(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy.db")
+	keychain := NewMemorySecrets()
+	const oldPassword = "legacy-rdp-fixture-to-remove"
+	s, err := Open(path, &failingSecrets{keychain})
+	must(t, err)
+	defer func() { _ = s.Close() }()
+
+	var mode string
+	must(t, s.db.QueryRow(`PRAGMA journal_mode=WAL`).Scan(&mode))
+	if mode != "wal" {
+		t.Fatalf("journal mode = %q", mode)
+	}
+	for _, id := range []string{"needs-migration", "has-new-password"} {
+		_, err := s.db.Exec(`INSERT INTO rdp_profiles (id, name, host, password) VALUES (?, ?, ?, ?)`, id, id, "host.example", oldPassword)
+		must(t, err)
+	}
+	s.MoveLegacyPasswords()
+	assertLegacyRows := func(want int) {
+		t.Helper()
+		var count int
+		must(t, s.db.QueryRow(`SELECT COUNT(*) FROM rdp_profiles WHERE password = ?`, oldPassword).Scan(&count))
+		if count != want {
+			t.Fatalf("rows awaiting migration = %d, want %d", count, want)
+		}
+	}
+	assertLegacyRows(2)
+	must(t, s.Close())
+
+	vault := NewVault(keychain)
+	s, err = Open(path, vault)
+	must(t, err)
+	assertLegacyRows(2)
+	vault.SetEnabled(true)
+	s.MoveLegacyPasswords()
+	assertLegacyRows(2)
+	// A page written before the migration can still contain the password in
+	// the WAL even if the next update clears the password column.
+	_, err = s.db.Exec(`UPDATE rdp_profiles SET name = 'Changed name' WHERE id = 'needs-migration'`)
+	must(t, err)
+	wal, err := os.ReadFile(path + "-wal")
+	must(t, err)
+	if !bytes.Contains(wal, []byte(oldPassword)) {
+		t.Fatal("legacy fixture was not written to the WAL")
+	}
+	vault.Unseal(bytes.Repeat([]byte{1}, 32))
+	must(t, vault.Set(rdpSecretKey("has-new-password"), "new-rdp-fixture"))
+	s.MoveLegacyPasswords()
+	s.MoveLegacyPasswords()
+	assertLegacyRows(0)
+
+	for id, want := range map[string]string{"needs-migration": oldPassword, "has-new-password": "new-rdp-fixture"} {
+		p, err := s.GetRDPProfile(id)
+		must(t, err)
+		if p.Password != want || !p.HasPassword {
+			t.Fatalf("RDP password missing or changed for %s", id)
+		}
+		raw, err := keychain.Get(rdpSecretKey(id))
+		must(t, err)
+		if !bytes.HasPrefix([]byte(raw), []byte(sealedPrefix)) {
+			t.Fatal("migrated password is not sealed")
+		}
+	}
+	for _, file := range []string{path, path + "-wal", path + "-shm"} {
+		data, err := os.ReadFile(file)
+		if file != path && errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		must(t, err)
+		if bytes.Contains(data, []byte(oldPassword)) {
+			t.Fatalf("legacy password still present in %s", filepath.Base(file))
+		}
+	}
+}
 
 func TestPasswordNeverPlaintextWithoutKeychain(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "t.db"), &failingSecrets{NewMemorySecrets()})

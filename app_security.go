@@ -237,6 +237,9 @@ func (a *App) UnlockWithBiometrics() error {
 		return err
 	}
 	a.sec.lock.UnlockVerified()
+	if a.data != nil {
+		a.data.MoveLegacyPasswords()
+	}
 	return nil
 }
 

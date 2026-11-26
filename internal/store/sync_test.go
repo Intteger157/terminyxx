@@ -57,12 +57,23 @@ func TestBundleRoundTrip(t *testing.T) {
 	if l, _ := b.ListSSHProfiles(); len(l) != 1 {
 		t.Fatalf("duplicated hosts: %d", len(l))
 	}
+	without.SSH[0].Name = "Renamed host"
+	if _, err := b.ImportBundle(without); err != nil {
+		t.Fatal(err)
+	}
+	profile, err := b.GetSSHProfile("h")
+	must(t, err)
+	pw, err := b.SSHPassword("h")
+	must(t, err)
+	if profile.Name != "Renamed host" || pw != "pw" {
+		t.Fatal("same-destination import must merge metadata and preserve the saved password")
+	}
 	if _, err := b.ImportBundle(Bundle{Version: 99}); err == nil {
 		t.Fatal("future version accepted")
 	}
 }
 
-func TestImportResetsRiskyFlagsAndReportsReplaced(t *testing.T) {
+func TestImportResetsRiskyFlagsAndReportsConflicts(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "t.db"), NewMemorySecrets())
 	must(t, err)
 	defer s.Close()
@@ -70,23 +81,83 @@ func TestImportResetsRiskyFlagsAndReportsReplaced(t *testing.T) {
 	must(t, s.SaveSSHProfile(SSHProfile{ID: "a", Name: "a", Host: "old", Port: 22, Username: "u", AgentForwarding: true, Tunnels: []Tunnel{keep}}))
 
 	res, err := s.ImportBundle(Bundle{Version: BundleVersion, SSH: []SSHProfile{
-		// Existing host: address changed, its own agent forwarding and tunnel kept,
-		// a new auto-start tunnel turned off.
-		{ID: "a", Name: "a", Host: "evil", Port: 22, Username: "u", AgentForwarding: true,
+		// Existing host: keep its local profile and permissions intact.
+		{ID: "a", Name: "a", Host: "other", Port: 22, Username: "u", AgentForwarding: true,
 			Tunnels: []Tunnel{keep, {ID: "t2", Kind: "dynamic", BindPort: 1080, AutoStart: true}}},
-		// New host: agent forwarding turned off.
-		{ID: "b", Name: "b", Host: "h", Port: 22, Username: "u", AgentForwarding: true},
+		// New host: restricted settings require local approval.
+		{ID: "b", Name: "b", Host: "h", Port: 22, Username: "u", AgentForwarding: true, AllowLegacyAlgorithms: true},
 	}})
 	must(t, err)
-	if len(res.Replaced) != 1 || res.Replaced[0] != "a" || res.FlagsReset != 2 {
+	if len(res.SkippedConflicts) != 1 || res.SkippedConflicts[0] != "a" || res.FlagsReset != 1 || res.Hosts != 1 {
 		t.Fatalf("result %+v", res)
 	}
 	a, _ := s.GetSSHProfile("a")
-	if !a.AgentForwarding || !a.Tunnels[0].AutoStart || a.Tunnels[1].AutoStart {
+	if a.Host != "old" || !a.AgentForwarding || len(a.Tunnels) != 1 || a.Tunnels[0] != keep {
 		t.Fatalf("host a %+v", a)
 	}
-	if b, _ := s.GetSSHProfile("b"); b.AgentForwarding {
-		t.Fatal("agent forwarding imported for a new host")
+	if b, _ := s.GetSSHProfile("b"); b.AgentForwarding || b.AllowLegacyAlgorithms {
+		t.Fatal("restricted settings imported for a new host")
+	}
+}
+
+func TestImportKeepsPasswordsWithLocalSSHDestinations(t *testing.T) {
+	s, _, _ := openTest(t)
+	hop := SSHProfile{ID: "jump", Name: "Jump", Host: "jump.example", Port: 22, Username: "u", Password: "jump-fixture"}
+	target := SSHProfile{ID: "target", Name: "Target", Host: "target.example", Port: 22, Username: "u",
+		JumpProfileID: hop.ID, AgentForwarding: true, Password: "target-fixture",
+		Proxy: ProxySettings{Type: "http", Host: "proxy.example", Port: 3128, Username: "proxy-user", Password: "proxy-fixture"}}
+	must(t, s.SaveSSHProfile(hop))
+	must(t, s.SaveSSHProfile(target))
+	hop.Host, hop.Password = "changed-jump.example", ""
+	target.Proxy.Host, target.Proxy.Password, target.Password = "changed-proxy.example", "", ""
+	res, err := s.ImportBundle(Bundle{Version: BundleVersion, SSH: []SSHProfile{target, hop}})
+	must(t, err)
+	if res.Hosts != 0 || len(res.SkippedConflicts) != 2 {
+		t.Fatalf("import result: %+v", res)
+	}
+	for id, want := range map[string]string{hop.ID: "jump-fixture", target.ID: "target-fixture"} {
+		got, err := s.SSHPassword(id)
+		must(t, err)
+		if got != want {
+			t.Fatalf("saved password changed for %s", id)
+		}
+	}
+	p, err := s.GetSSHProfile(target.ID)
+	must(t, err)
+	if p.Proxy.Host != "proxy.example" || p.JumpProfileID != hop.ID || !p.AgentForwarding {
+		t.Fatalf("local route or permission changed: %+v", p)
+	}
+	p, err = s.GetSSHProfile(hop.ID)
+	must(t, err)
+	if p.Host != "jump.example" {
+		t.Fatalf("local jump address changed: %+v", p)
+	}
+	if pw, err := s.ProxyPassword(target.ID); err != nil || pw != "proxy-fixture" {
+		t.Fatal("saved proxy password changed")
+	}
+}
+
+func TestImportRequiresLocalApprovalToUseAnExistingIdentityOnANewHost(t *testing.T) {
+	s, _, _ := openTest(t)
+	local := Identity{ID: "i", Name: "Local login", Username: "local-user", Password: "identity-fixture"}
+	must(t, s.SaveIdentity(local))
+	incoming := local
+	incoming.Username, incoming.Password = "other-user", ""
+	res, err := s.ImportBundle(Bundle{Version: BundleVersion, Identities: []Identity{incoming},
+		SSH: []SSHProfile{{ID: "new", Name: "New", Host: "new.example", Username: "other-user", IdentityID: local.ID}}})
+	must(t, err)
+	if res.Hosts != 1 || res.Identities != 0 || res.FlagsReset != 1 || len(res.SkippedConflicts) != 1 {
+		t.Fatalf("import result: %+v", res)
+	}
+	identity, err := s.GetIdentity(local.ID)
+	must(t, err)
+	if identity.Username != local.Username || !identity.HasPassword {
+		t.Fatalf("local login changed: %+v", identity)
+	}
+	p, err := s.GetSSHProfile("new")
+	must(t, err)
+	if p.IdentityID != "" || p.HasPassword {
+		t.Fatalf("new host inherited a local login: %+v", p)
 	}
 }
 
@@ -97,8 +168,10 @@ func TestRDPImportKeepsRedirectionLocal(t *testing.T) {
 	local := rdp.RDPProfile{ID: "existing", Host: "work", Port: 3389, Options: rdp.Options{
 		Clipboard: true, Drives: true, DrivePaths: []string{"allowed"}, DrivesReadOnly: true,
 	}}
+	local.Password = "rdp-fixture"
 	must(t, s.SaveRDPProfile(local))
 	incoming := local
+	incoming.Password = ""
 	incoming.Options = rdp.Options{AllDrives: true, Printers: true, SmartCards: true, Camera: true, Microphone: true}
 	newHost := incoming
 	newHost.ID = "new"
@@ -123,13 +196,17 @@ func TestRDPImportKeepsRedirectionLocal(t *testing.T) {
 	added, err := s.GetRDPProfile(newHost.ID)
 	must(t, err)
 	assertNoEscalation(added)
-	incoming.Host = "changed"
-	_, err = s.ImportBundle(Bundle{Version: BundleVersion, RDP: []rdp.RDPProfile{incoming}})
+	incoming.Options.Gateway = "changed-gateway.example"
+	res, err = s.ImportBundle(Bundle{Version: BundleVersion, RDP: []rdp.RDPProfile{incoming}})
 	must(t, err)
+	if res.Hosts != 0 || len(res.SkippedConflicts) != 1 {
+		t.Fatalf("changed destination import result: %+v", res)
+	}
 	changed, err := s.GetRDPProfile(local.ID)
 	must(t, err)
 	assertNoEscalation(changed)
-	if changed.Options.Clipboard || changed.Options.Drives || len(changed.Options.DrivePaths) != 0 {
-		t.Fatalf("local permissions followed a changed destination: %+v", changed.Options)
+	if changed.Options.Gateway != local.Options.Gateway || changed.Password != local.Password || !changed.Options.Clipboard ||
+		!changed.Options.Drives || len(changed.Options.DrivePaths) != 1 || changed.Options.DrivePaths[0] != "allowed" {
+		t.Fatal("changed gateway overwrote the saved RDP profile")
 	}
 }

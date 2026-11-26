@@ -242,6 +242,8 @@ func (s *Store) hostName(l invLink) string {
 
 // refreshHost updates the name and address of a host an inventory created.
 func (s *Store) refreshHost(l invLink, name, addr string) (changed, found bool, err error) {
+	s.profileMu.Lock()
+	defer s.profileMu.Unlock()
 	table := "ssh_profiles"
 	if l.kind == KindRDP {
 		table = "rdp_profiles"

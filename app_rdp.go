@@ -8,6 +8,8 @@ import (
 	"os"
 	"strconv"
 
+	"github.com/gorilla/websocket"
+
 	"terminyxx/internal/rdpdrive"
 	"terminyxx/internal/rdpgw"
 )
@@ -32,7 +34,7 @@ type RDPSession struct {
 	// Audio is the profile's audio mode: "local" plays remote sound here,
 	// "remote" leaves it on the server, "off" mutes it.
 	Audio string `json:"audio"`
-	// Drives are the shared folders to announce; RDPDriveOp serves them.
+	// Drives are the shared folders to announce on the drive channel.
 	Drives []rdpdrive.Drive `json:"drives"`
 	// DrivesFailed lists shared folders that could not be opened.
 	DrivesFailed []string `json:"drivesFailed"`
@@ -43,7 +45,7 @@ type RDPSession struct {
 	DriveTrace bool `json:"driveTrace"`
 }
 
-// RDPOpen prepares a built-in RDP session for tabID. It fetches the server
+// RDPOpen prepares a built-in RDP session for one connection attempt. It fetches the server
 // certificate first: an untrusted one comes back as an
 // RDPCERT_UNKNOWN|… / RDPCERT_CHANGED|… error, and the retry passes its
 // fingerprint as acceptFingerprint to trust it. password overrides the saved
@@ -56,6 +58,16 @@ func (a *App) RDPOpen(tabID, profileID, password, acceptFingerprint string) (RDP
 	if a.data == nil || a.rdpgw == nil {
 		return RDPSession{}, errors.New("storage is unavailable")
 	}
+	if tabID == "" {
+		return RDPSession{}, errors.New("RDP connection ID is required")
+	}
+	attempt := a.rdpgw.Begin(a.ctx, tabID)
+	prepared := false
+	defer func() {
+		if !prepared {
+			attempt.Close()
+		}
+	}()
 	p, err := a.data.GetRDPProfile(profileID)
 	if err != nil {
 		return RDPSession{}, err
@@ -64,11 +76,13 @@ func (a *App) RDPOpen(tabID, profileID, password, acceptFingerprint string) (RDP
 	if port == 0 {
 		port = 3389
 	}
-	ctx, cancel := context.WithCancel(a.ctx)
-	defer cancel()
+	ctx := attempt.Context()
 	chain, err := rdpgw.Probe(ctx, p.Host, port)
 	if err != nil {
 		return RDPSession{}, localNetworkHint(fmt.Errorf("could not reach %s: %w", p.Host, err))
+	}
+	if err := ctx.Err(); err != nil {
+		return RDPSession{}, err
 	}
 	dest := net.JoinHostPort(p.Host, strconv.Itoa(port))
 	if err := a.rdpgw.Trust().Check(dest, p.Host, chain); err != nil {
@@ -80,20 +94,31 @@ func (a *App) RDPOpen(tabID, profileID, password, acceptFingerprint string) (RDP
 			return RDPSession{}, fmt.Errorf("save certificate: %w", err)
 		}
 	}
-	url, token, err := a.rdpgw.Issue(tabID, p.Host, port)
+	url, token, err := attempt.Issue(p.Host, port)
 	if err != nil {
 		return RDPSession{}, err
 	}
 	if password == "" {
 		password = p.Password
 	}
-	drives, drivesFailed := a.openDrives(tabID, p.Options.DrivePaths, p.Options.AllDrives, p.Options.DrivesReadOnly)
+	driveSession, drivesFailed := openDrives(p.Options.DrivePaths, p.Options.AllDrives, p.Options.DrivesReadOnly)
+	drives := driveSession.Drives()
 	driveURL := ""
 	if len(drives) > 0 {
-		if driveURL, err = a.rdpgw.IssueChannel(tabID, "drive"); err != nil {
+		driveURL, err = attempt.IssueChannel(func(ctx context.Context, ws *websocket.Conn) {
+			a.serveDrives(ctx, tabID, driveSession, ws)
+		}, driveSession.Close)
+		if err != nil {
+			driveSession.Close()
 			return RDPSession{}, err
 		}
+	} else {
+		driveSession.Close()
 	}
+	if err := ctx.Err(); err != nil {
+		return RDPSession{}, err
+	}
+	prepared = true
 	return RDPSession{
 		ProxyURL:       url,
 		Token:          token,
@@ -116,11 +141,11 @@ func (a *App) RDPOpen(tabID, profileID, password, acceptFingerprint string) (RDP
 
 // RDPClose ends the built-in RDP session of tabID.
 func (a *App) RDPClose(tabID string) {
+	if tabID == "" {
+		return
+	}
 	if a.rdpgw != nil {
 		a.rdpgw.Close(tabID)
-	}
-	if a.drives != nil {
-		a.drives.Close(tabID)
 	}
 }
 

@@ -22,6 +22,7 @@ import (
 	"unicode/utf8"
 
 	"golang.org/x/text/encoding/charmap"
+	"terminyxx/internal/importfile"
 )
 
 // Session is one imported session. Kind is "ssh" or "rdp"; other MobaXterm
@@ -64,7 +65,7 @@ var unescaper = strings.NewReplacer(
 
 // ParseFile reads a .mxtsessions or MobaXterm.ini file.
 func ParseFile(path string) (Result, error) {
-	data, err := os.ReadFile(path)
+	data, err := importfile.Read(path, importfile.MaxSize)
 	if err != nil {
 		return Result{Path: path}, err
 	}

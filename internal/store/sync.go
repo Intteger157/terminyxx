@@ -1,6 +1,9 @@
 package store
 
 import (
+	"cmp"
+	"database/sql"
+	"errors"
 	"fmt"
 	"slices"
 
@@ -33,9 +36,11 @@ type ImportResult struct {
 	Hosts      int `json:"hosts"`
 	Snippets   int `json:"snippets"`
 	Identities int `json:"identities"`
-	// Replaced lists existing hosts whose address, user or jump host the
-	// import changed, so the UI can tell the user.
+	// Replaced lists stream profiles whose configuration changed.
 	Replaced []string `json:"replaced"`
+	// SkippedConflicts lists local hosts and identities whose connection or
+	// login differs from the imported record with the same ID.
+	SkippedConflicts []string `json:"skippedConflicts"`
 	// FlagsReset counts SSH hosts with restricted behaviors from the file.
 	FlagsReset int `json:"flagsReset"`
 	// RDPRedirectionSkipped counts profiles whose local permissions were kept
@@ -110,14 +115,15 @@ func (s *Store) ExportBundle(includePasswords bool) (Bundle, error) {
 	return b, nil
 }
 
-// ImportBundle merges a bundle into the database by ID: items in the bundle
-// replace local ones with the same ID, everything else is kept. Nothing is
-// ever deleted, so a host removed on another machine stays here.
+// ImportBundle merges by ID. Connection and login changes to existing
+// profiles require a local edit so saved credentials stay with their destination.
 func (s *Store) ImportBundle(b Bundle) (ImportResult, error) {
 	var res ImportResult
 	if b.Version < 1 || b.Version > BundleVersion {
 		return res, fmt.Errorf("unsupported sync file version %d", b.Version)
 	}
+	s.profileMu.Lock()
+	defer s.profileMu.Unlock()
 
 	// Parents first, so every SaveFolder finds its parent.
 	pending := append([]Folder(nil), b.Folders...)
@@ -147,9 +153,21 @@ func (s *Store) ImportBundle(b Bundle) (ImportResult, error) {
 		pending = rest
 	}
 
+	newIdentities := make(map[string]bool, len(b.Identities))
 	for _, i := range b.Identities {
-		if err := s.SaveIdentity(i); err != nil {
+		cur, err := s.GetIdentity(i.ID)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return res, err
+		}
+		if err == nil && (cur.Username != i.Username || (cur.AuthType == "key") != (i.AuthType == "key") || cur.KeyPath != i.KeyPath) {
+			res.SkippedConflicts = append(res.SkippedConflicts, cur.Name)
+			continue
+		}
+		if err := s.saveIdentity(i); err != nil {
+			return res, err
+		}
+		if errors.Is(err, sql.ErrNoRows) {
+			newIdentities[i.ID] = true
 		}
 		res.Identities++
 	}
@@ -159,16 +177,27 @@ func (s *Store) ImportBundle(b Bundle) (ImportResult, error) {
 			p.FolderID = ""
 		}
 		var local *SSHProfile
-		if cur, err := s.GetSSHProfile(p.ID); err == nil {
-			local = &cur
-			if cur.Host != p.Host || cur.Port != p.Port || cur.Username != p.Username || cur.JumpProfileID != p.JumpProfileID {
-				res.Replaced = append(res.Replaced, cur.Name)
-			}
+		cur, err := s.GetSSHProfile(p.ID)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return res, err
 		}
-		if resetRiskyFlags(&p, local) {
+		linkSkipped := false
+		if err == nil {
+			if !sameSSHSyncDestination(cur, p) {
+				res.SkippedConflicts = append(res.SkippedConflicts, cur.Name)
+				continue
+			}
+			local = &cur
+		} else if p.IdentityID != "" && !newIdentities[p.IdentityID] && s.identityExists(p.IdentityID) {
+			// Linking a new destination to an existing local login requires
+			// an explicit edit on this device.
+			p.IdentityID = ""
+			linkSkipped = true
+		}
+		if resetRiskyFlags(&p, local) || linkSkipped {
 			res.FlagsReset++
 		}
-		if err := s.SaveSSHProfile(p); err != nil {
+		if err := s.saveSSHProfile(p); err != nil {
 			return res, err
 		}
 		res.Hosts++
@@ -178,17 +207,22 @@ func (s *Store) ImportBundle(b Bundle) (ImportResult, error) {
 			p.FolderID = ""
 		}
 		var local rdp.Options
-		if cur, err := s.GetRDPProfile(p.ID); err == nil {
-			if cur.Host != p.Host || cur.Port != p.Port || cur.Username != p.Username || cur.Domain != p.Domain || cur.Options.Gateway != p.Options.Gateway {
-				res.Replaced = append(res.Replaced, cur.Name)
-			} else {
-				local = cur.Options
+		cur, err := scanRDP(s.db.QueryRow(`SELECT `+rdpColumns+` FROM rdp_profiles WHERE id = ?`, p.ID))
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return res, err
+		}
+		if err == nil {
+			if cur.Host != p.Host || cmp.Or(cur.Port, 3389) != cmp.Or(p.Port, 3389) ||
+				cur.Username != p.Username || cur.Domain != p.Domain || cur.Options.Gateway != p.Options.Gateway {
+				res.SkippedConflicts = append(res.SkippedConflicts, cur.Name)
+				continue
 			}
+			local = cur.Options
 		}
 		if keepLocalRedirection(&p.Options, local) {
 			res.RDPRedirectionSkipped++
 		}
-		if err := s.SaveRDPProfile(p); err != nil {
+		if err := s.saveRDPProfile(p); err != nil {
 			return res, err
 		}
 		res.Hosts++
@@ -216,6 +250,15 @@ func (s *Store) ImportBundle(b Bundle) (ImportResult, error) {
 	return res, nil
 }
 
+func sameSSHSyncDestination(local, incoming SSHProfile) bool {
+	return local.Host == incoming.Host && cmp.Or(local.Port, 22) == cmp.Or(incoming.Port, 22) &&
+		local.Username == incoming.Username && local.JumpProfileID == incoming.JumpProfileID &&
+		local.IdentityID == incoming.IdentityID && local.AuthType == incoming.AuthType && local.KeyPath == incoming.KeyPath &&
+		local.Proxy.Type == incoming.Proxy.Type && local.Proxy.Host == incoming.Proxy.Host &&
+		local.Proxy.Port == incoming.Proxy.Port && local.Proxy.Username == incoming.Proxy.Username &&
+		local.Proxy.Command == incoming.Proxy.Command
+}
+
 // Redirection permissions belong to this device and the reviewed destination.
 func keepLocalRedirection(opts *rdp.Options, local rdp.Options) bool {
 	changed := opts.Clipboard != local.Clipboard || opts.Printers != local.Printers ||
@@ -240,6 +283,10 @@ func keepLocalRedirection(opts *rdp.Options, local rdp.Options) bool {
 // anything was turned off.
 func resetRiskyFlags(p *SSHProfile, local *SSHProfile) bool {
 	changed := false
+	if p.AllowLegacyAlgorithms && (local == nil || !local.AllowLegacyAlgorithms) {
+		p.AllowLegacyAlgorithms = false
+		changed = true
+	}
 	if p.AgentForwarding && (local == nil || !local.AgentForwarding) {
 		p.AgentForwarding = false
 		changed = true

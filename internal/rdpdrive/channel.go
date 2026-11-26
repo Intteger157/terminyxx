@@ -1,6 +1,7 @@
 package rdpdrive
 
 import (
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -16,9 +17,8 @@ import (
 // The webview sends requests over a WebSocket side channel (see
 // rdpgw.IssueChannel) and gets the replies back on it, one binary message
 // each: a little-endian uint32 header length, the JSON header (a Request or
-// Reply without its data), then the raw data bytes. Requests are handled one
-// at a time in order, so a request that takes no reply (ID 0, such as the
-// close of a handle that changed nothing) is still done before the next one.
+// Reply without its data), then the raw data bytes. Requests for the same
+// handle stay in order, including requests that take no reply (ID 0).
 
 var errFrame = errors.New("malformed frame")
 
@@ -63,17 +63,26 @@ func encodeReply(r Reply) ([]byte, error) {
 //
 // With a trace writer, pulse (if set) is logged every 2 seconds, so the trace
 // shows whether the rest of the session is still moving.
-func Serve(s *Session, ws *websocket.Conn, locked func() bool, trace io.Writer, pulse func() string) {
+func Serve(parent context.Context, s *Session, ws *websocket.Conn, locked func() bool, trace io.Writer, pulse func() string) {
+	ws.SetReadLimit(16 << 20)
+	ctx, cancel := context.WithCancel(parent)
+	stopClose := context.AfterFunc(ctx, func() { _ = ws.Close() })
 	d := &dispatcher{
+		ctx:    ctx,
 		s:      s,
 		ws:     ws,
 		locked: locked,
 		t:      newTracer(trace),
-		queues: map[uint32][]Request{},
+		queues: map[uint32][]queuedRequest{},
 		slots:  make(chan struct{}, maxConcurrent),
 	}
-	defer d.t.summary()
-	defer d.wg.Wait()
+	defer func() {
+		cancel()
+		stopClose()
+		_ = ws.Close()
+		d.wg.Wait()
+		d.t.summary()
+	}()
 	if trace != nil && pulse != nil {
 		stop := make(chan struct{})
 		defer close(stop)
@@ -100,33 +109,50 @@ func Serve(s *Session, ws *websocket.Conn, locked func() bool, trace io.Writer, 
 			continue
 		}
 		req, err := decodeRequest(msg)
-		if err != nil {
+		if err != nil || ctx.Err() != nil {
 			return
 		}
 		switch req.Op {
 		case "reset":
 			start := time.Now()
-			s.Reset()
-			d.t.log(req, Reply{}, start)
+			status := StatusSuccess
+			if locked != nil && locked() {
+				status = StatusAccessDenied
+			} else {
+				s.Reset()
+			}
+			d.t.log(req, Reply{Status: status}, start)
 		case "note":
 			// A trace line from the client: the IRPs it sees and its replies.
 			d.t.log(req, Reply{}, time.Now())
-		case "create":
-			d.wg.Add(1)
-			go func() {
-				defer d.wg.Done()
-				d.run(req)
-			}()
 		default:
-			d.enqueue(req)
+			size := len(msg)
+			if req.Op == "read" && req.Length <= MaxRead {
+				size += int(req.Length)
+			}
+			if !d.submit(queuedRequest{req: req, size: size}) {
+				_ = ws.WriteControl(websocket.CloseMessage,
+					websocket.FormatCloseMessage(websocket.CloseTryAgainLater, "shared folder queue is full"),
+					time.Now().Add(time.Second))
+				return
+			}
 		}
 	}
 }
 
-// maxConcurrent bounds the requests running at once.
-const maxConcurrent = 16
+const (
+	maxConcurrent      = 16
+	maxPendingRequests = 512
+	maxPendingBytes    = 64 << 20
+)
+
+type queuedRequest struct {
+	req  Request
+	size int
+}
 
 type dispatcher struct {
+	ctx    context.Context
 	s      *Session
 	ws     *websocket.Conn
 	locked func() bool
@@ -136,39 +162,77 @@ type dispatcher struct {
 
 	wmu sync.Mutex // serializes writes to ws
 
-	mu     sync.Mutex
-	queues map[uint32][]Request // pending requests per handle; present while one runs
+	mu           sync.Mutex
+	queues       map[uint32][]queuedRequest // per handle; present while one runs
+	pending      int
+	pendingBytes int
 }
 
-func (d *dispatcher) enqueue(req Request) {
+// Admission accounts for running requests too, including replies waiting to
+// be sent. Closing the channel on overflow preserves per-handle ordering.
+func (d *dispatcher) admit(size int) bool {
 	d.mu.Lock()
-	q, busy := d.queues[req.FileID]
-	d.queues[req.FileID] = append(q, req)
+	defer d.mu.Unlock()
+	if d.pending >= maxPendingRequests || size > maxPendingBytes-d.pendingBytes {
+		return false
+	}
+	d.pending++
+	d.pendingBytes += size
+	return true
+}
+
+func (d *dispatcher) submit(job queuedRequest) bool {
+	if !d.admit(job.size) {
+		return false
+	}
+	if job.req.Op == "create" {
+		d.wg.Go(func() { d.run(job) })
+		return true
+	}
+	id := job.req.FileID
+	d.mu.Lock()
+	q, busy := d.queues[id]
+	d.queues[id] = append(q, job)
 	d.mu.Unlock()
 	if busy {
-		return
+		return true
 	}
-	d.wg.Add(1)
-	go func() {
-		defer d.wg.Done()
+	d.wg.Go(func() {
 		for {
 			d.mu.Lock()
-			q := d.queues[req.FileID]
+			q := d.queues[id]
 			if len(q) == 0 {
-				delete(d.queues, req.FileID)
+				delete(d.queues, id)
 				d.mu.Unlock()
 				return
 			}
 			next := q[0]
-			d.queues[req.FileID] = q[1:]
+			q[0] = queuedRequest{}
+			d.queues[id] = q[1:]
 			d.mu.Unlock()
 			d.run(next)
 		}
-	}()
+	})
+	return true
 }
 
-func (d *dispatcher) run(req Request) {
-	d.slots <- struct{}{}
+func (d *dispatcher) run(job queuedRequest) {
+	defer func() {
+		d.mu.Lock()
+		d.pending--
+		d.pendingBytes -= job.size
+		d.mu.Unlock()
+	}()
+	select {
+	case <-d.ctx.Done():
+		return
+	case d.slots <- struct{}{}:
+	}
+	defer func() { <-d.slots }()
+	if d.ctx.Err() != nil {
+		return
+	}
+	req := job.req
 	start := time.Now()
 	var reply Reply
 	if d.locked != nil && d.locked() {
@@ -176,7 +240,6 @@ func (d *dispatcher) run(req Request) {
 	} else {
 		reply = d.s.Do(req)
 	}
-	<-d.slots
 	d.t.log(req, reply, start)
 	if req.ID == 0 {
 		return
@@ -187,7 +250,13 @@ func (d *dispatcher) run(req Request) {
 	}
 	d.wmu.Lock()
 	defer d.wmu.Unlock()
-	_ = d.ws.WriteMessage(websocket.BinaryMessage, out)
+	if d.ctx.Err() != nil {
+		return
+	}
+	_ = d.ws.SetWriteDeadline(time.Now().Add(15 * time.Second))
+	if err := d.ws.WriteMessage(websocket.BinaryMessage, out); err != nil {
+		_ = d.ws.Close()
+	}
 }
 
 type opStats struct {

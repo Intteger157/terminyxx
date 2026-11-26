@@ -88,6 +88,12 @@ func (s *Store) IdentityPassword(id string) (string, error) {
 }
 
 func (s *Store) SaveIdentity(i Identity) error {
+	s.profileMu.Lock()
+	defer s.profileMu.Unlock()
+	return s.saveIdentity(i)
+}
+
+func (s *Store) saveIdentity(i Identity) error {
 	if i.ID == "" {
 		return errors.New("identity id is required")
 	}
@@ -122,6 +128,8 @@ ON CONFLICT(id) DO UPDATE SET name=excluded.name, username=excluded.username,
 // DeleteIdentity removes an identity. The hosts that used it keep working:
 // its user, auth type, key and password are copied into each of them first.
 func (s *Store) DeleteIdentity(id string) error {
+	s.profileMu.Lock()
+	defer s.profileMu.Unlock()
 	ident, err := s.GetIdentity(id)
 	if err != nil {
 		return err

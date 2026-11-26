@@ -14,6 +14,8 @@ import (
 	"strings"
 	"unicode/utf16"
 	"unicode/utf8"
+
+	"terminyxx/internal/importfile"
 )
 
 // Host is one imported host. Kind is "ssh" or "rdp".
@@ -183,7 +185,7 @@ func appData() string {
 // readText reads a file as UTF-8, handling UTF-8/UTF-16 BOMs (Windows
 // tools such as regedit and mstsc write UTF-16).
 func readText(path string) (string, error) {
-	data, err := os.ReadFile(path)
+	data, err := importfile.Read(path, importfile.MaxSize)
 	if err != nil {
 		return "", err
 	}

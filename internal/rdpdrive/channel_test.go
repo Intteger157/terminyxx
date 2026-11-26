@@ -54,7 +54,7 @@ func TestServeOverWebSocket(t *testing.T) {
 			return
 		}
 		defer ws.Close()
-		Serve(s, ws, locked.Load, &trace, nil)
+		Serve(r.Context(), s, ws, locked.Load, &trace, nil)
 		close(done)
 	}))
 	defer srv.Close()
@@ -115,7 +115,7 @@ func TestServeKeepsOrderPerHandleUnderLoad(t *testing.T) {
 			return
 		}
 		defer ws.Close()
-		Serve(s, ws, nil, nil, nil)
+		Serve(r.Context(), s, ws, nil, nil, nil)
 	}))
 	defer srv.Close()
 	ws, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(srv.URL, "http"), nil)
@@ -171,4 +171,24 @@ func TestServeKeepsOrderPerHandleUnderLoad(t *testing.T) {
 			t.Fatalf("file %d = %v", i, b)
 		}
 	}
+}
+
+func TestDriveQueueAdmissionLimitsRequestsAndBytes(t *testing.T) {
+	t.Run("requests", func(t *testing.T) {
+		var d dispatcher
+		for i := 0; i < maxPendingRequests; i++ {
+			if !d.admit(1) {
+				t.Fatalf("request %d rejected before reaching the limit", i)
+			}
+		}
+		if d.admit(1) {
+			t.Fatal("request limit exceeded")
+		}
+	})
+	t.Run("bytes", func(t *testing.T) {
+		var d dispatcher
+		if !d.admit(maxPendingBytes) || d.admit(1) {
+			t.Fatal("byte limit not enforced")
+		}
+	})
 }

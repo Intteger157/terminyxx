@@ -146,7 +146,7 @@ func TestGatewaySession(t *testing.T) {
 	defer g.Shutdown()
 
 	// Untrusted: the gateway refuses after the TLS handshake.
-	url, token, err := g.Issue("tab1", host, port)
+	url, token, err := g.Begin(context.Background(), "tab1").Issue(host, port)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +160,7 @@ func TestGatewaySession(t *testing.T) {
 	if err := trust.Trust(dest, ue.Fingerprint, ue.Cert); err != nil {
 		t.Fatal(err)
 	}
-	url, token, err = g.Issue("tab1", host, port)
+	url, token, err = g.Begin(context.Background(), "tab1").Issue(host, port)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -241,9 +241,9 @@ func roundTrip(t *testing.T, url, token string) *pdu {
 func TestChannelTicketsAreSingleUse(t *testing.T) {
 	g := New(nil)
 	defer g.Shutdown()
-	got := make(chan string, 1)
-	g.SetChannelHandler("drive", func(tabID string, ws *websocket.Conn) { got <- tabID })
-	url, err := g.IssueChannel("tab1", "drive")
+	got := make(chan context.Context, 1)
+	attempt := g.Begin(context.Background(), "tab1")
+	url, err := attempt.IssueChannel(func(ctx context.Context, _ *websocket.Conn) { got <- ctx }, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -252,8 +252,8 @@ func TestChannelTicketsAreSingleUse(t *testing.T) {
 		t.Fatal(err)
 	}
 	ws.Close()
-	if tab := <-got; tab != "tab1" {
-		t.Fatalf("tab = %q", tab)
+	if ctx := <-got; ctx != attempt.Context() {
+		t.Fatal("side channel attached to the wrong attempt")
 	}
 	if _, resp, err := websocket.DefaultDialer.Dial(url, nil); err == nil || resp == nil || resp.StatusCode != 401 {
 		t.Fatalf("second use: %v %v", err, resp)
@@ -262,6 +262,71 @@ func TestChannelTicketsAreSingleUse(t *testing.T) {
 	if _, _, err := websocket.DefaultDialer.Dial(bad, nil); err == nil {
 		t.Fatal("unknown ticket accepted")
 	}
+}
+
+func TestCloseCancelsPendingRDPConnection(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	address := ln.Addr().(*net.TCPAddr)
+	g := New(nil)
+	defer g.Shutdown()
+
+	probe := g.Begin(context.Background(), "probe")
+	g.Close("probe")
+	if _, _, err := probe.Issue("localhost", 3389); !errors.Is(err, context.Canceled) {
+		t.Fatalf("closed probe was able to issue a ticket: %v", err)
+	}
+
+	url, token, err := g.Begin(context.Background(), "relay").Issue(address.IP.String(), address.Port)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws := dialWS(t, url)
+	defer ws.Close()
+	sendRequest(t, ws, token)
+	_ = ln.(*net.TCPListener).SetDeadline(time.Now().Add(5 * time.Second))
+	peer, err := ln.Accept()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer peer.Close()
+	_ = peer.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if _, err := readTPKT(peer); err != nil {
+		t.Fatal(err)
+	}
+	// The ordinary X.224 handshake is still waiting for our test server.
+	g.Close("relay")
+	_ = ws.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if _, _, err := ws.ReadMessage(); err == nil || errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Fatalf("expected the WebSocket to close promptly: %v", err)
+	}
+	if _, err := peer.Read(make([]byte, 1)); err == nil || errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Fatalf("expected the upstream connection to close promptly: %v", err)
+	}
+}
+
+func TestReplacementKeepsItsOwnSideChannel(t *testing.T) {
+	g := New(nil)
+	defer g.Shutdown()
+	earlier := g.Begin(context.Background(), "tab")
+	handler := func(context.Context, *websocket.Conn) {}
+	oldURL, err := earlier.IssueChannel(handler, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current := g.Begin(context.Background(), "tab")
+	currentURL, err := current.IssueChannel(handler, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	earlier.Close()
+	if _, resp, err := websocket.DefaultDialer.Dial(oldURL, nil); err == nil || resp == nil || resp.StatusCode != 401 {
+		t.Fatalf("old ticket remained usable: %v", err)
+	}
+	dialWS(t, currentURL).Close()
 }
 
 func TestTrustStoreListRemove(t *testing.T) {

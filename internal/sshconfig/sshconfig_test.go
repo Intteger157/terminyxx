@@ -5,7 +5,27 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"terminyxx/internal/importfile"
 )
+
+func TestIncludesShareInputSizeLimit(t *testing.T) {
+	dir := t.TempDir()
+	config := filepath.Join(dir, "config")
+	if err := os.WriteFile(config, []byte("Include shared.conf\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	included := filepath.Join(dir, "shared.conf")
+	if err := os.WriteFile(included, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Truncate(included, importfile.MaxSize); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ParseFile(config); err == nil || !strings.Contains(err.Error(), "and its includes exceed") {
+		t.Fatalf("expected combined import size error, got %v", err)
+	}
+}
 
 const sample = `
 # global default

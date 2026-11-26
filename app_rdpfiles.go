@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -193,36 +194,21 @@ func (a *App) prunePrints(maxAge time.Duration) {
 	}
 }
 
-// openDrives starts the drive session of tabID with the profile's shared
-// folders (or every local drive) and returns those that will be announced,
-// plus the folders that could not be opened.
-func (a *App) openDrives(tabID string, paths []string, all, readOnly bool) ([]rdpdrive.Drive, []string) {
-	if a.drives == nil {
-		return nil, nil
-	}
-	if !all && len(paths) == 0 {
-		a.drives.Close(tabID)
-		return nil, nil
-	}
-	opened, failed := a.drives.Open(tabID, rdpdrive.Plan(paths, all, readOnly))
+// openDrives prepares the profile's shared folders for one connection.
+func openDrives(paths []string, all, readOnly bool) (*rdpdrive.Session, []string) {
+	session, failed := rdpdrive.NewSession(rdpdrive.Plan(paths, all, readOnly))
 	names := make([]string, 0, len(failed))
 	for _, d := range failed {
 		names = append(names, d.Path)
 	}
-	return opened, names
+	return session, names
 }
 
 // serveDrives answers the drive requests of tabID's built-in RDP session on
 // its side channel. Paths are confined to the shared folders here; the
 // webview only relays. While the app is locked, every request is refused.
-func (a *App) serveDrives(tabID string, ws *websocket.Conn) {
-	if a.drives == nil {
-		return
-	}
-	s := a.drives.Get(tabID)
-	if s == nil {
-		return
-	}
+func (a *App) serveDrives(ctx context.Context, tabID string, s *rdpdrive.Session, ws *websocket.Conn) {
+	defer s.Close()
 	// TERMINYXX_RDP_TRACE=1 logs every drive request to <data dir>/rdp-drives.log.
 	var trace io.Writer
 	if os.Getenv("TERMINYXX_RDP_TRACE") == "1" {
@@ -243,5 +229,5 @@ func (a *App) serveDrives(tabID string, ws *websocket.Conn) {
 		return fmt.Sprintf("gateway: up=%d down=%d up_write_waiting=%v down_write_waiting=%v %s",
 			up, down, upStall.Round(time.Millisecond), downStall.Round(time.Millisecond), a.rdpgw.TCPInfo(tabID))
 	}
-	rdpdrive.Serve(s, ws, func() bool { return a.sec.lock != nil && a.sec.lock.Locked() }, trace, pulse)
+	rdpdrive.Serve(ctx, s, ws, func() bool { return a.sec.lock != nil && a.sec.lock.Locked() }, trace, pulse)
 }

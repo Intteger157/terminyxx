@@ -1,12 +1,38 @@
 package importers
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"unicode/utf16"
+
+	"terminyxx/internal/importfile"
 )
+
+func TestImportRejectsOversizedFilesBeforeParsing(t *testing.T) {
+	for _, tc := range []struct{ source, file string }{
+		{"tabby", "config.yaml"},
+		{"mobaxterm", "sessions.mxtsessions"},
+		{"rdpfiles", "host.rdp"},
+		{"securecrt", "host.ini"},
+	} {
+		t.Run(tc.source, func(t *testing.T) {
+			dir := t.TempDir()
+			p := writeFile(t, dir, tc.file, nil)
+			if err := os.Truncate(p, importfile.MaxSize+1); err != nil {
+				t.Fatal(err)
+			}
+			if tc.source == "securecrt" {
+				p = dir
+			}
+			if _, err := Read(tc.source, []string{p}); !errors.Is(err, importfile.ErrTooLarge) {
+				t.Fatalf("expected import size error, got %v", err)
+			}
+		})
+	}
+}
 
 func writeFile(t *testing.T, dir, name string, data []byte) string {
 	t.Helper()

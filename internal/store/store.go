@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	_ "modernc.org/sqlite"
 	"terminyxx/internal/rdp"
@@ -105,6 +106,8 @@ type Folder struct {
 type Store struct {
 	db      *sql.DB
 	secrets Secrets
+	// Serializes profile writes with sync conflict checks and password migration.
+	profileMu sync.Mutex
 }
 
 // New opens the app database in the user's config directory.
@@ -150,8 +153,12 @@ func Open(path string, secrets Secrets) (*Store, error) {
 		_ = db.Close()
 		return nil, err
 	}
-	s.moveLegacyPasswords()
 	restrictDBFiles(path)
+	// The app initializes the vault after opening the store, then runs the
+	// migration once it knows whether the vault needs an unlock.
+	if _, usesVault := secrets.(*Vault); !usesVault {
+		s.MoveLegacyPasswords()
+	}
 	return s, nil
 }
 
@@ -332,34 +339,6 @@ func (s *Store) migrate() error {
 	return nil
 }
 
-// moveLegacyPasswords moves plaintext passwords from the database into the
-// keychain. If the keychain is unavailable they stay where they are.
-func (s *Store) moveLegacyPasswords() {
-	if s.secrets == nil {
-		return
-	}
-	rows, err := s.db.Query(`SELECT id, password FROM ssh_profiles WHERE password != ''`)
-	if err != nil {
-		return
-	}
-	type pw struct{ id, value string }
-	var pending []pw
-	for rows.Next() {
-		var p pw
-		if rows.Scan(&p.id, &p.value) == nil {
-			pending = append(pending, p)
-		}
-	}
-	rows.Close()
-	for _, p := range pending {
-		if err := s.secrets.Set(sshSecretKey(p.id), p.value); err != nil {
-			log.Printf("store: keychain unavailable, keeping password in database: %v", err)
-			return
-		}
-		_, _ = s.db.Exec(`UPDATE ssh_profiles SET password = '' WHERE id = ?`, p.id)
-	}
-}
-
 // --- SSH profiles ---
 
 const sshColumns = `id, name, host, port, username, auth_type, password, key_path, folder_id, sort_order, allow_legacy_algorithms, agent_forwarding, jump_profile_id, tunnels, sftp_only, identity_id, options, proxy, x11_forwarding`
@@ -466,10 +445,6 @@ func (s *Store) SecretKeys() ([]string, error) {
 	return keys, nil
 }
 
-// MoveLegacyPasswords retries moving plaintext database passwords into the
-// keychain (needed after an unlock when the vault was locked at startup).
-func (s *Store) MoveLegacyPasswords() { s.moveLegacyPasswords() }
-
 // SSHPassword returns the stored password for a profile ("" if none); for a
 // host that uses an identity, the identity's password.
 func (s *Store) SSHPassword(id string) (string, error) {
@@ -495,6 +470,12 @@ func (s *Store) SSHPassword(id string) (string, error) {
 }
 
 func (s *Store) SaveSSHProfile(p SSHProfile) error {
+	s.profileMu.Lock()
+	defer s.profileMu.Unlock()
+	return s.saveSSHProfile(p)
+}
+
+func (s *Store) saveSSHProfile(p SSHProfile) error {
 	var exists bool
 	var sortOrder int
 	err := s.db.QueryRow(`SELECT sort_order FROM ssh_profiles WHERE id = ?`, p.ID).Scan(&sortOrder)
@@ -606,6 +587,8 @@ func (s *Store) deleteSecret(id string) {
 }
 
 func (s *Store) DeleteSSHProfile(id string) error {
+	s.profileMu.Lock()
+	defer s.profileMu.Unlock()
 	s.deleteSecret(id)
 	if s.secrets != nil {
 		_ = s.secrets.Delete(proxySecretKey(id))
@@ -696,6 +679,12 @@ func (s *Store) ListRDPProfiles() ([]rdp.RDPProfile, error) {
 }
 
 func (s *Store) SaveRDPProfile(p rdp.RDPProfile) error {
+	s.profileMu.Lock()
+	defer s.profileMu.Unlock()
+	return s.saveRDPProfile(p)
+}
+
+func (s *Store) saveRDPProfile(p rdp.RDPProfile) error {
 	fullscreen := 0
 	if p.Fullscreen {
 		fullscreen = 1
@@ -743,6 +732,8 @@ ON CONFLICT(id) DO UPDATE SET
 }
 
 func (s *Store) DeleteRDPProfile(id string) error {
+	s.profileMu.Lock()
+	defer s.profileMu.Unlock()
 	if s.secrets != nil {
 		_ = s.secrets.Delete(rdpSecretKey(id))
 	}

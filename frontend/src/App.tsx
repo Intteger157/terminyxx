@@ -335,6 +335,7 @@ function App() {
   // --- automatic reconnect ---
 
   const tabsRef = useRef(tabs);
+  const rdpConnections = useRef(new Map<string, { id: string; controller: AbortController }>());
   tabsRef.current = tabs;
 
   const autoReconnect = async (id: string) => {
@@ -563,10 +564,18 @@ function App() {
     await connectTab(tabId, profile);
   };
 
+  const stopRdp = (tabId: string) => {
+    const connection = rdpConnections.current.get(tabId);
+    if (!connection) return;
+    rdpConnections.current.delete(tabId);
+    connection.controller.abort();
+    void RDPClose(connection.id).catch(() => {});
+  };
+
   const handleDisconnect = async (id: string) => {
-    if (tabs.find((t) => t.id === id)?.rdp) {
-      RDPClose(id).catch(() => {});
-      patchTab(id, { status: 'disconnected' });
+    if (rdpConnections.current.has(id) || tabs.find((t) => t.id === id)?.rdp) {
+      stopRdp(id);
+      patchTab(id, { status: 'disconnected', rdpSession: undefined });
       return;
     }
     try {
@@ -631,7 +640,8 @@ function App() {
     if (ids.length === 0) return;
     for (const id of ids) {
       const tab = tabs.find((t) => t.id === id);
-      if (tab && (tab.status === 'connected' || tab.status === 'connecting')) SSHDisconnect(id).catch(() => {});
+      if (rdpConnections.current.has(id) || tab?.rdp) stopRdp(id);
+      else if (tab && (tab.status === 'connected' || tab.status === 'connecting')) SSHDisconnect(id).catch(() => {});
     }
     setTabs((prev) => prev.filter((t) => !ids.includes(t.id)));
     setSftpOpenFor((s) => {
@@ -772,14 +782,24 @@ function App() {
 
   /** Gets a session ticket for an RDP tab; the RdpPane then connects with it. */
   const connectRdp = async (tabId: string, profile: RDPProfile, password = '') => {
-    patchTab(tabId, { status: 'connecting', title: profile.name, host: profile.host, rdp: profile, profile: undefined, stream: undefined });
+    stopRdp(tabId);
+    const connection = { id: crypto.randomUUID(), controller: new AbortController() };
+    const { signal } = connection.controller;
+    rdpConnections.current.set(tabId, connection);
+    patchTab(tabId, { status: 'connecting', title: profile.name, host: profile.host, rdp: profile, rdpSession: undefined, profile: undefined, stream: undefined });
     try {
-      const session = await openRdpSession(tabId, profile, dialogs, password);
-      patchTab(tabId, { started: true, rdpSession: session });
+      const session = await openRdpSession(connection.id, profile, dialogs, password, signal);
+      if (signal.aborted) return;
+      patchTab(tabId, { started: true, rdpSession: Object.assign(session, { connectionId: connection.id }) });
       touchHost('rdp', profile.id);
     } catch (err) {
+      if (signal.aborted) return;
+      stopRdp(tabId);
       setTabs((prev) => prev.map((t) => (t.id === tabId ? { ...t, status: t.started ? 'disconnected' : 'idle' } : t)));
       if (!(err instanceof ConnectCancelled)) dialogs.toast(`Could not connect to ${profile.host}: ${errorText(err)}`, 'error');
+    } finally {
+      // A close can reach Go before the open call finishes preparing.
+      if (signal.aborted) void RDPClose(connection.id).catch(() => {});
     }
   };
 
@@ -824,7 +844,9 @@ function App() {
     };
   }, [rdpFull]);
 
-  const handleRdpEnded = async (tab: TerminalTab, error: string | null, authFailed: boolean) => {
+  const handleRdpEnded = async (tab: TerminalTab, connectionId: string, error: string | null, authFailed: boolean) => {
+    if (rdpConnections.current.get(tab.id)?.id !== connectionId) return;
+    stopRdp(tab.id);
     // Drop the spent ticket (and the password in it); a reconnect gets a new one.
     patchTab(tab.id, { status: 'disconnected', rdpSession: undefined });
     if (!error || !tab.rdp) return;
@@ -835,7 +857,9 @@ function App() {
         password: true,
         confirmLabel: 'Connect',
       });
-      if (pw !== null) void connectRdp(tab.id, tab.rdp, pw);
+      if (pw !== null && tabsRef.current.some((t) => t.id === tab.id) && !rdpConnections.current.has(tab.id)) {
+        void connectRdp(tab.id, tab.rdp, pw);
+      }
       return;
     }
     dialogs.toast(`RDP session with ${tab.rdp.host} ended: ${error}`, 'error');
@@ -1093,12 +1117,13 @@ function App() {
                     title={`${tab.rdp.name} · ${tab.rdp.host}`}
                     onExitFullscreen={exitRdpFullscreen}
                     onDisconnect={() => handleDisconnect(tab.id)}
-                    onConnected={() => {
+                    onConnected={(connectionId) => {
+                      if (rdpConnections.current.get(tab.id)?.id !== connectionId) return;
                       patchTab(tab.id, { status: 'connected' });
                       // "Full screen" in the host's settings opens it that way.
                       if (tab.rdp?.fullscreen) enterRdpFullscreen(tab.id);
                     }}
-                    onEnded={(error, auth) => void handleRdpEnded(tab, error, auth)}
+                    onEnded={(connectionId, error, auth) => void handleRdpEnded(tab, connectionId, error, auth)}
                   />
                   )}
                   {tab.status === 'connecting' && <RdpConnecting tab={tab} />}

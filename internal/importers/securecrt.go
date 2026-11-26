@@ -1,11 +1,15 @@
 package importers
 
 import (
+	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"terminyxx/internal/importfile"
 )
 
 // SecureCRT stores one session per .ini file under Config/Sessions; folders
@@ -51,6 +55,9 @@ func readSecureCRT(paths []string) (Result, error) {
 		}
 		text, err := readText(p)
 		if err != nil {
+			if errors.Is(err, importfile.ErrTooLarge) {
+				return fmt.Errorf("%s: %w", d.Name(), err)
+			}
 			return nil
 		}
 		rel, _ := filepath.Rel(root, filepath.Dir(p))

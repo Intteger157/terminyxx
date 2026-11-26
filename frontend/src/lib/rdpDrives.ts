@@ -4,6 +4,9 @@ import type { DriveReply, DriveRequest } from '@devolutions/iron-remote-desktop-
 const UNSUCCESSFUL = 0xc0000001;
 /** A request still unanswered after this long is logged once. */
 const SLOW_MS = 3000;
+const MAX_PENDING_REQUESTS = 512;
+const MAX_BUFFERED_BYTES = 64 * 1024 * 1024;
+const TRY_AGAIN_LATER = 1013;
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -23,6 +26,7 @@ const decoder = new TextDecoder();
 export class DriveChannel {
   private ws: WebSocket;
   private queue: ArrayBuffer[] = [];
+  private queuedBytes = 0;
   private pending = new Map<number, { op: string; path?: string; at: number; warned: boolean }>();
   private closed = false;
   private watchdog: number;
@@ -33,6 +37,7 @@ export class DriveChannel {
     url: string,
     private reply: (r: DriveReply) => void,
     private onAnnounced: (deviceId: number, accepted: boolean) => void,
+    private onOverload: () => void,
     /** Adds a `pulse js` line to the drive trace every 2 seconds. */
     private trace = false
   ) {
@@ -41,9 +46,13 @@ export class DriveChannel {
     this.ws.onopen = () => {
       for (const m of this.queue) this.ws.send(m);
       this.queue = [];
+      this.queuedBytes = 0;
     };
     this.ws.onmessage = (e) => this.receive(e.data as ArrayBuffer);
-    this.ws.onclose = () => this.fail();
+    this.ws.onclose = (event) => {
+      if (!this.closed && event.code === TRY_AGAIN_LATER) this.onOverload();
+      this.fail();
+    };
     this.watchdog = window.setInterval(() => this.checkSlow(), 1000);
   }
 
@@ -54,22 +63,36 @@ export class DriveChannel {
       this.onAnnounced(req.deviceId, req.accepted);
       return;
     }
-    if (this.closed) {
+    if (this.closed || this.ws.readyState >= WebSocket.CLOSING) {
       if (req.id) this.reply({ id: req.id, status: UNSUCCESSFUL });
+      return;
+    }
+    const { data, header } = split(req);
+    const head = encoder.encode(JSON.stringify(header));
+    const size = 4 + head.length + (data?.length ?? 0);
+    if (
+      this.pending.size >= MAX_PENDING_REQUESTS ||
+      this.queue.length >= MAX_PENDING_REQUESTS ||
+      size + this.queuedBytes + this.ws.bufferedAmount > MAX_BUFFERED_BYTES
+    ) {
+      this.close();
+      if (req.id) this.reply({ id: req.id, status: UNSUCCESSFUL });
+      this.onOverload();
       return;
     }
     if (req.id) {
       const path = 'path' in req ? req.path : undefined;
       this.pending.set(req.id, { op: req.op, path, at: performance.now(), warned: false });
     }
-    const { data, header } = split(req);
-    const head = encoder.encode(JSON.stringify(header));
-    const msg = new Uint8Array(4 + head.length + (data?.length ?? 0));
+    const msg = new Uint8Array(size);
     new DataView(msg.buffer).setUint32(0, head.length, true);
     msg.set(head, 4);
     if (data) msg.set(data, 4 + head.length);
     if (this.ws.readyState === WebSocket.OPEN) this.ws.send(msg.buffer);
-    else this.queue.push(msg.buffer);
+    else {
+      this.queue.push(msg.buffer);
+      this.queuedBytes += size;
+    }
   };
 
   close() {
@@ -79,6 +102,7 @@ export class DriveChannel {
   }
 
   private receive(buf: ArrayBuffer) {
+    if (this.closed) return;
     const view = new DataView(buf);
     const n = view.getUint32(0, true);
     const r = JSON.parse(decoder.decode(new Uint8Array(buf, 4, n))) as DriveReply;
@@ -93,6 +117,8 @@ export class DriveChannel {
   private fail() {
     if (this.closed) return;
     this.closed = true;
+    this.queue = [];
+    this.queuedBytes = 0;
     window.clearInterval(this.watchdog);
     for (const id of this.pending.keys()) this.reply({ id, status: UNSUCCESSFUL });
     this.pending.clear();

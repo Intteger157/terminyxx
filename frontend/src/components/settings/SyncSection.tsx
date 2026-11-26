@@ -36,15 +36,18 @@ export function SyncSection() {
     setBusy('import');
     try {
       const r = await ImportSync(passphrase);
+      if (r.skippedConflicts?.length) {
+        dialogs.toast(`Kept local entries with different connection or login settings: ${r.skippedConflicts.join(', ')}. Review them and edit them locally if needed.`, 'error');
+      }
       if (r.hosts + r.folders + r.snippets + r.identities === 0) return;
       window.dispatchEvent(new Event(LIBRARY_CHANGED));
       void reloadIdentities();
       dialogs.toast(`Merged ${r.hosts} hosts, ${r.identities} identities, ${r.folders} folders and ${r.snippets} snippets.`, 'success');
       if (r.replaced?.length) {
-        dialogs.toast(`Updated the address of existing hosts: ${r.replaced.join(', ')}. Check them before connecting.`, 'error');
+        dialogs.toast(`Updated the connection settings of existing Telnet or serial profiles: ${r.replaced.join(', ')}. Check them before connecting.`, 'error');
       }
       if (r.flagsReset > 0) {
-        dialogs.toast(`Restricted SSH settings were skipped on ${r.flagsReset} hosts. Review the host settings to enable them on this computer.`);
+        dialogs.toast(`Restricted SSH settings or local identity links were skipped on ${r.flagsReset} hosts. Review their settings to enable them on this computer.`);
       }
       if (r.rdpRedirectionSkipped > 0) {
         dialogs.toast(`RDP redirection settings from the file were skipped on ${r.rdpRedirectionSkipped} hosts. Review sharing permissions in the host settings.`);
@@ -89,7 +92,7 @@ export function SyncSection() {
       </Section>
       <Section title="How merging works">
         <ul className="list-disc pl-5 space-y-1 text-[12.5px] text-gray-400">
-          <li>Importing matches items by ID: a host from the file replaces the local one with the same ID, new ones are added.</li>
+          <li>Importing matches items by ID and adds new entries. Changes to existing SSH or RDP connections and identity logins must be made locally.</li>
           <li>Nothing is deleted. A host you removed on another computer stays here until you remove it too.</li>
           <li>App settings, the master password and host keys are not included.</li>
         </ul>
