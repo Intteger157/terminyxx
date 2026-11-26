@@ -77,6 +77,28 @@ export namespace connection {
 	        this.command = source["command"];
 	    }
 	}
+	export class Container {
+	    runtime: string;
+	    id: string;
+	    name: string;
+	    namespace: string;
+	    image: string;
+	    status: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Container(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.runtime = source["runtime"];
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.namespace = source["namespace"];
+	        this.image = source["image"];
+	        this.status = source["status"];
+	    }
+	}
 	export class ConnectRequest {
 	    id: string;
 	    host: string;
@@ -95,6 +117,7 @@ export namespace connection {
 	    jump: ConnectRequest[];
 	    jumpFor: string;
 	    encoding: string;
+	    container?: Container;
 	    startup: string;
 	    proxy: ProxySpec;
 	    x11: boolean;
@@ -122,6 +145,7 @@ export namespace connection {
 	        this.jump = this.convertValues(source["jump"], ConnectRequest);
 	        this.jumpFor = source["jumpFor"];
 	        this.encoding = source["encoding"];
+	        this.container = this.convertValues(source["container"], Container);
 	        this.startup = source["startup"];
 	        this.proxy = this.convertValues(source["proxy"], ProxySpec);
 	        this.x11 = source["x11"];
@@ -145,30 +169,7 @@ export namespace connection {
 		    return a;
 		}
 	}
-	export class Container {
-	    runtime: string;
-	    id: string;
-	    name: string;
-	    namespace: string;
-	    image: string;
-	    status: string;
-	    execCommand: string;
 	
-	    static createFrom(source: any = {}) {
-	        return new Container(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.runtime = source["runtime"];
-	        this.id = source["id"];
-	        this.name = source["name"];
-	        this.namespace = source["namespace"];
-	        this.image = source["image"];
-	        this.status = source["status"];
-	        this.execCommand = source["execCommand"];
-	    }
-	}
 	export class EditFile {
 	    content: string;
 	    version: string;

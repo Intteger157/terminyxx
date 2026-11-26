@@ -18,8 +18,8 @@ func TestParseDocker(t *testing.T) {
 		t.Fatalf("%+v", list)
 	}
 	want := "docker exec -it 3f2a9c1b7d10 sh -c 'command -v bash >/dev/null 2>&1 && exec bash || exec sh'"
-	if list[0].ExecCommand != want {
-		t.Errorf("exec command:\n got %s\nwant %s", list[0].ExecCommand, want)
+	if got, err := list[0].ShellCommand(); err != nil || got != want {
+		t.Errorf("exec command = %q, %v; want %q", got, err, want)
 	}
 }
 
@@ -29,8 +29,8 @@ func TestParseKubectl(t *testing.T) {
 	if err != nil || len(list) != 2 {
 		t.Fatalf("%+v %v", list, err)
 	}
-	if list[1].Namespace != "kube-system" || !strings.HasPrefix(list[1].ExecCommand, "kubectl exec -it -n kube-system coredns-abc -- sh -c") {
-		t.Errorf("%+v", list[1])
+	if got, err := list[1].ShellCommand(); err != nil || !strings.HasPrefix(got, "kubectl exec -it -n kube-system coredns-abc -- sh -c") {
+		t.Errorf("exec command = %q, %v", got, err)
 	}
 }
 

@@ -27,7 +27,6 @@ import { StreamDialog } from './components/terminal/StreamDialog';
 import type { StreamDialogState } from './components/terminal/StreamDialog';
 import { ContainersDialog } from './components/terminal/ContainersDialog';
 import { InstallKeyDialog } from './components/terminal/InstallKeyDialog';
-import { setInitialInput } from './lib/initialInput';
 import { SaveStreamProfile, StreamConnect, TouchHost } from '../wailsjs/go/main/App';
 import { connection } from '../wailsjs/go/models';
 import { RecordingsDialog } from './components/recordings/RecordingsDialog';
@@ -285,10 +284,11 @@ function App() {
     return id;
   };
 
-  const connectTab = async (tabId: string, profile: SSHProfile): Promise<boolean> => {
-    patchTab(tabId, { status: 'connecting', title: profile.name, host: profile.host, profile, sshDiagnostic: undefined });
+  const connectTab = async (tabId: string, profile: SSHProfile, container?: connection.Container) => {
+    const title = container ? `${container.name} · ${profile.name}` : profile.name;
+    patchTab(tabId, { status: 'connecting', title, host: profile.host, profile, container, sshDiagnostic: undefined });
     try {
-      const res = await connectWithPrompts(tabId, profile, dialogs);
+      const res = await connectWithPrompts(tabId, profile, dialogs, { container });
       let tabProfile = profile;
       if (res.allowedLegacy) {
         tabProfile = { ...tabProfile, allowLegacyAlgorithms: true };
@@ -319,7 +319,6 @@ function App() {
       }
       patchTab(tabId, { status: 'connected', started: true, profile: tabProfile });
       touchHost('ssh', profile.id);
-      return true;
     } catch (err) {
       const sshDiagnostic = err instanceof SSHConnectFailure ? err.diagnostic : undefined;
       setTabs((prev) => prev.map((t) =>
@@ -328,7 +327,6 @@ function App() {
       if (!(err instanceof ConnectCancelled)) {
         dialogs.toast(`Could not connect to ${profile.host}: ${errorText(err)}`, 'error');
       }
-      return false;
     }
   };
 
@@ -348,7 +346,7 @@ function App() {
     const profile = saved ? { ...saved, password: tab.profile.password } : tab.profile;
     patchTab(id, { status: 'connecting', sshDiagnostic: undefined });
     try {
-      await connectWithPrompts(id, profile, dialogs, { interactive: false });
+      await connectWithPrompts(id, profile, dialogs, { interactive: false, container: tab.container });
       patchTab(id, { status: 'connected', started: true, retry: undefined });
       dialogs.toast(`Reconnected to ${tab.title}`, 'success');
     } catch (err) {
@@ -618,20 +616,18 @@ function App() {
     if (connect) openStream(p);
   };
 
-  const openExec = async (tab: TerminalTab, c: connection.Container) => {
+  const openExec = (tab: TerminalTab, c: connection.Container) => {
     if (!tab.profile) return;
     setContainersFor(null);
     const id = newTab(c.name, tab.host, { target: tab.id, side: 'right' });
-    setInitialInput(id, c.execCommand + '\r');
-    const ok = await connectTab(id, tab.profile);
-    if (ok) patchTab(id, { title: `${c.name} · ${tab.profile.name}` });
+    void connectTab(id, tab.profile, c);
   };
 
   const handleReconnect = (tab: TerminalTab) => {
     if (tab.retry) patchTab(tab.id, { retry: undefined });
     if (tab.rdp) void connectRdp(tab.id, tab.rdp);
     else if (tab.stream) void connectStream(tab.id, tab.stream);
-    else if (tab.profile) connectTab(tab.id, tab.profile);
+    else if (tab.profile) void connectTab(tab.id, tab.profile, tab.container);
     else openConnectDialog(tab.id);
   };
 
@@ -1152,7 +1148,7 @@ function App() {
                   {tab.status !== 'connected' && <StatusOverlay tab={tab} onReconnect={() => handleReconnect(tab)} onCancelRetry={() => cancelRetry(tab.id)} onDetails={() => setSSHDiagnostic(tab.sshDiagnostic)} />}
                 </>
               ) : (
-                <PendingTab tab={tab} onConnect={() => (tab.rdp ? void connectRdp(tab.id, tab.rdp) : openConnectDialog(tab.id))} onDetails={() => setSSHDiagnostic(tab.sshDiagnostic)} />
+                <PendingTab tab={tab} onConnect={() => (tab.rdp || tab.container ? handleReconnect(tab) : openConnectDialog(tab.id))} onDetails={() => setSSHDiagnostic(tab.sshDiagnostic)} />
               )
             }
           />
@@ -1258,7 +1254,7 @@ function App() {
 
       {(() => {
         const t = tabs.find((x) => x.id === containersFor);
-        return t ? <ContainersDialog tab={t} onClose={() => setContainersFor(null)} onOpen={(c) => void openExec(t, c)} /> : null;
+        return t ? <ContainersDialog tab={t} onClose={() => setContainersFor(null)} onOpen={(c) => openExec(t, c)} /> : null;
       })()}
 
       {(() => {

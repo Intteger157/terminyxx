@@ -217,10 +217,20 @@ func (a *App) prepareSSHRequest(req *connection.ConnectRequest) error {
 			req.Proxy = a.proxyFor(p)
 			req.X11 = p.X11Forwarding && !p.SFTPOnly
 			req.Encoding = p.Options.Encoding
-			if !p.SFTPOnly {
+			if p.SFTPOnly && req.Container != nil {
+				return errors.New("a container shell requires an SSH shell")
+			}
+			if !p.SFTPOnly && req.Container == nil {
 				req.Startup = p.Options.StartupCommands
 			}
 		}
+	}
+	if req.Container != nil {
+		command, err := req.Container.ShellCommand()
+		if err != nil {
+			return err
+		}
+		req.Startup = command
 	}
 	if req.JumpFor != "" && a.data != nil && len(req.Jump) == 0 {
 		jump, err := a.resolveJumpChain(req.JumpFor)

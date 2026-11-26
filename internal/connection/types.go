@@ -55,8 +55,10 @@ type ConnectRequest struct {
 	JumpFor string `json:"jumpFor"`
 	// Encoding is the server's terminal charset ("" = UTF-8); see charsets.
 	Encoding string `json:"encoding"`
+	// Container selects a container shell in place of the profile's startup commands.
+	Container *Container `json:"container,omitempty"`
 	// Startup is typed into the shell once it has started, on every
-	// connect. App.SSHConnect fills both from the saved host.
+	// connect. App.SSHConnect fills it from the saved host or the container.
 	Startup string `json:"startup"`
 	// Proxy is used when this host is dialed directly (it is the target
 	// without jump hosts, or the first hop). Filled from the saved host.

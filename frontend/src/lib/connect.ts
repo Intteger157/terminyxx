@@ -52,7 +52,7 @@ export async function connectWithPrompts(
   id: string,
   profile: SSHProfile,
   dialogs: Dialogs,
-  opts: { interactive?: boolean } = {}
+  opts: { interactive?: boolean; container?: connection.Container } = {}
 ): Promise<ConnectResult> {
   const interactive = opts.interactive !== false;
   const result: ConnectResult = { rememberPassword: false };
@@ -99,6 +99,7 @@ export async function connectWithPrompts(
     // Saved hosts: the backend reads the password from the OS keychain.
     profileId: profile.hasPassword ? profile.id : '',
     jumpFor: profile.id,
+    container: opts.container,
     allowLegacyAlgorithms: !!profile.allowLegacyAlgorithms,
     agentForwarding: !!profile.agentForwarding,
   };

@@ -23,8 +23,6 @@ type Container struct {
 	Namespace string `json:"namespace"` // kubectl only
 	Image     string `json:"image"`
 	Status    string `json:"status"`
-	// ExecCommand opens a shell inside it; the UI types it into a new pane.
-	ExecCommand string `json:"execCommand"`
 }
 
 // safeName accepts what Docker, Podman and Kubernetes allow in ids, names
@@ -33,6 +31,24 @@ type Container struct {
 var safeName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,252}$`)
 
 const shellPick = `command -v bash >/dev/null 2>&1 && exec bash || exec sh`
+
+// ShellCommand builds the command for a new interactive container pane.
+func (c Container) ShellCommand() (string, error) {
+	if !safeName.MatchString(c.ID) {
+		return "", errors.New("invalid container ID")
+	}
+	switch c.Runtime {
+	case RuntimeDocker, RuntimePodman:
+		return fmt.Sprintf("%s exec -it %s sh -c '%s'", c.Runtime, c.ID, shellPick), nil
+	case RuntimeKubectl:
+		if !safeName.MatchString(c.Namespace) {
+			return "", errors.New("invalid container namespace")
+		}
+		return fmt.Sprintf("kubectl exec -it -n %s %s -- sh -c '%s'", c.Namespace, c.ID, shellPick), nil
+	default:
+		return "", fmt.Errorf("unknown runtime %q", c.Runtime)
+	}
+}
 
 func listCommand(runtime string) (string, error) {
 	switch runtime {
@@ -64,7 +80,6 @@ func parseContainers(runtime, out string) ([]Container, error) {
 			}
 			list = append(list, Container{
 				Runtime: runtime, ID: f[0], Name: f[1], Image: f[2], Status: f[3],
-				ExecCommand: fmt.Sprintf("%s exec -it %s sh -c '%s'", runtime, f[0], shellPick),
 			})
 		case RuntimeKubectl:
 			f := strings.Fields(line)
@@ -73,7 +88,6 @@ func parseContainers(runtime, out string) ([]Container, error) {
 			}
 			list = append(list, Container{
 				Runtime: runtime, ID: f[1], Name: f[1], Namespace: f[0], Status: f[2],
-				ExecCommand: fmt.Sprintf("kubectl exec -it -n %s %s -- sh -c '%s'", f[0], f[1], shellPick),
 			})
 		}
 	}

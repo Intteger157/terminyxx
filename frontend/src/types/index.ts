@@ -167,6 +167,8 @@ export interface TerminalTab {
   /** Set once a shell has run in this tab, so the terminal stays mounted. */
   started: boolean;
   profile?: SSHProfile;
+  /** The container to enter whenever this SSH pane connects. */
+  container?: connection.Container;
   sshDiagnostic?: connection.SSHDiagnostic;
   /** Telnet or serial session (no SSH profile). */
   stream?: StreamSpec;
